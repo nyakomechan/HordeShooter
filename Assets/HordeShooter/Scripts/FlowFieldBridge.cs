@@ -17,6 +17,7 @@ public class FlowFieldBridge : UdonSharpBehaviour
 {
     public UdonPathfindingManager pathfinder;
     public HordeSim hordeSim;
+    public HordeNet hordeNet;       // downed players are excluded from the flow source
     public Material bakeMaterial;   // generated from FlowBake.compeito
     public float refreshInterval = 1.0f;
     public float refreshMoveThreshold = 1.5f;
@@ -157,12 +158,18 @@ public class FlowFieldBridge : UdonSharpBehaviour
         if (alive > 0) centroid = centroid / (float)alive;
 
         VRCPlayerApi[] players = VRCPlayerApi.GetPlayers(new VRCPlayerApi[16]);
+        int[] hp = hordeNet != null ? hordeNet.playerHp : null;
         Vector3 best = _lastSourcePos;
         float bestD2 = 1e30f;
         for (int i = 0; i < players.Length; i++)
         {
             VRCPlayerApi p = players[i];
             if (p == null || !p.IsValid()) continue;
+            if (hp != null)
+            {
+                int idx = p.playerId - 1;
+                if (idx >= 0 && idx < 16 && (int)hp[idx] <= 0) continue;   // downed: not a flow source
+            }
             Vector3 pos = p.GetPosition();
             Vector3 d = pos - centroid;
             float d2 = d.sqrMagnitude;

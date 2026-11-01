@@ -161,6 +161,10 @@ public static class HordeSceneSetup
         net.hordeSim = sim;
         net.gun = gun;
         gun.hordeNet = net;
+        // downed players (playerHp <= 0) are excluded from enemy targeting and
+        // from the flow-field source selection
+        sim.hordeNet = net;
+        flow.hordeNet = net;
         // Late-joiner catch-up on its OWN GameObject: MultiSim/VRChat serialize
         // per network-id (GameObject), so sharing one would re-send the 6KB
         // catch-up array on every 3Hz HordeNet snapshot.

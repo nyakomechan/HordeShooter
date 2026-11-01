@@ -24,6 +24,7 @@ public partial class HordeSim : UdonSharpBehaviour
     public Material enemyMaterial;    // instance of HordeShooter/EnemyRender
     public Mesh enemyMesh;            // built by EnemyMeshBuilder
     public Transform[] spawnPoints;   // up to 16
+    public HordeNet hordeNet;         // downed players (playerHp <= 0) are excluded from targeting
 
     [Header("Simulation config")]
     public int slotCount = 512;
@@ -413,13 +414,23 @@ public partial class HordeSim : UdonSharpBehaviour
         VRCPlayerApi[] players = VRCPlayerApi.GetPlayers(_playerBuf);
         int n = players.Length;
         if (n > MAX_PLAYERS) n = MAX_PLAYERS;
+        // downed players (playerHp <= 0) are invisible to the sim's target
+        // selection: w=0 makes NearestPlayer skip them and drops them as
+        // targets of enemies already chasing them.
+        int[] hp = hordeNet != null ? hordeNet.playerHp : null;
         for (int i = 0; i < n; i++)
         {
             VRCPlayerApi p = players[i];
             if (p == null) continue;
             if (!p.IsValid()) continue;
             Vector3 pos = p.GetPosition();
-            _playerColors[i] = new Color(pos.x, pos.y, pos.z, 1f);
+            float active = 1f;
+            if (hp != null)
+            {
+                int idx = p.playerId - 1;
+                if (idx >= 0 && idx < 16 && (int)hp[idx] <= 0) active = 0f;
+            }
+            _playerColors[i] = new Color(pos.x, pos.y, pos.z, active);
         }
         _playerTex.SetPixels(_playerColors);
         _playerTex.Apply(false);
