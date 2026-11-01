@@ -21,6 +21,7 @@ public partial class HordeNet
     public float playerDamageInterval = 0.5f;
     public int playerDamagePerTick = 10;
     public float playerAttackRange = 1.4f;
+    public float gameOverResetSeconds = 10f;   // game over -> auto reset & respawn after this
 
     private int _waveSpawnRemaining;
     private int _waveNextSlot;
@@ -29,6 +30,7 @@ public partial class HordeNet
     private float _waveCheckTimer;
     private float _intermissionUntil;
     private float _damageTimer;
+    private float _gameOverAt = -1f;
     private bool[] _playerHitTick = new bool[16];
     private int[] _playerIds = new int[16];
 
@@ -128,6 +130,15 @@ public partial class HordeNet
                 _BeginNextWave();
             }
         }
+        else if (gamePhase == 3)
+        {
+            // game over: auto reset & respawn after a grace period
+            if (Time.time - _gameOverAt >= gameOverResetSeconds)
+            {
+                _gameOverAt = -1f;
+                _RestartGame();
+            }
+        }
     }
 
     private int _CountAlive()
@@ -207,6 +218,7 @@ public partial class HordeNet
         if (_playerCount > 0 && downed >= _playerCount)
         {
             gamePhase = 3;
+            _gameOverAt = Time.time;
             RequestSerialization();
         }
     }

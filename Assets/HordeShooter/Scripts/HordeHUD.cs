@@ -64,7 +64,7 @@ public class HordeHUD : UdonSharpBehaviour
         {
             if (phase == 1) waveText.text = "WAVE " + wave;
             else if (phase == 2) waveText.text = "NEXT WAVE...";
-            else if (phase == 3) waveText.text = "GAME OVER - USE THE RESTART CUBE";
+            else if (phase == 3) waveText.text = "GAME OVER - RESTARTING...";
             else waveText.text = "PRESS THE START CUBE";
         }
         if (aliveText != null) aliveText.text = "" + _lastAliveCount;
@@ -88,13 +88,16 @@ public class HordeHUD : UdonSharpBehaviour
         }
         else if (hp > 0f && _downed)
         {
-            // revived (wave cleared by the team, or game restart)
+            // revived (wave cleared by the team, or game-over auto reset)
             _downed = false;
             me.SetWalkSpeed(2f);
             me.SetRunSpeed(4f);
             me.SetStrafeSpeed(2f);
             me.SetJumpImpulse(3f);
             if (downOverlay != null) downOverlay.SetActive(false);
+            // after a game-over reset everyone respawns at the lobby spawn
+            if (hordeNet.gamePhase == 0)
+                me.TeleportTo(new Vector3(0f, 2f, 10f), Quaternion.identity);
         }
 
         // boss bar: first registered boss slot that is alive on the local mirror
