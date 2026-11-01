@@ -95,9 +95,9 @@ public class HordeHUD : UdonSharpBehaviour
             me.SetStrafeSpeed(2f);
             me.SetJumpImpulse(3f);
             if (downOverlay != null) downOverlay.SetActive(false);
-            // after a game-over reset everyone respawns at the lobby spawn
-            if (hordeNet.gamePhase == 0)
-                me.TeleportTo(new Vector3(0f, 2f, 10f), Quaternion.identity);
+            // after a game-over reset everyone respawns at the world spawn point
+            // via VRChat's native respawn (no manual Y alignment needed)
+            if (hordeNet.gamePhase == 0) me.Respawn();
         }
 
         // boss bar: first registered boss slot that is alive on the local mirror
