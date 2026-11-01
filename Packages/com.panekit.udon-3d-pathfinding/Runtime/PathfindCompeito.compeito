@@ -1,0 +1,124 @@
+#pragma kernel WavefrontExpand float4
+#pragma kernel Reset float4
+#pragma kernel GoalDetect float
+
+#define INF 999999.0
+#define STATE_UNREACHED 0
+#define STATE_FRONTIER 1
+#define STATE_VISITED 2
+
+Texture2D<float4> _PathDataIn;
+Texture2D<float4> _Neighbors;
+Texture2D<float> _LeafCosts;
+
+int _NodeCount;
+int _StartIndex;
+int _GoalIndex;
+int _LeafTexWidth;
+
+int2 LeafToTexel(int idx)
+{
+    return int2(idx % _LeafTexWidth, idx / _LeafTexWidth);
+}
+
+int GetLeafIndex(uint2 id)
+{
+    return (int)(id.y * _LeafTexWidth + id.x);
+}
+
+float4 LoadPathNode(int idx)
+{
+    return _PathDataIn.Load(int3(LeafToTexel(idx), 0));
+}
+
+float LoadLeafCost(int idx)
+{
+    return _LeafCosts.Load(int3(LeafToTexel(idx), 0));
+}
+
+void LoadNeighbors(int idx, out int nbrs[6])
+{
+    int2 t = LeafToTexel(idx);
+    int yBase = t.y * 2;
+    float4 row0 = _Neighbors.Load(int3(t.x, yBase, 0));
+    float4 row1 = _Neighbors.Load(int3(t.x, yBase + 1, 0));
+    nbrs[0] = (int)row0.x;
+    nbrs[1] = (int)row0.y;
+    nbrs[2] = (int)row0.z;
+    nbrs[3] = (int)row0.w;
+    nbrs[4] = (int)row1.x;
+    nbrs[5] = (int)row1.y;
+}
+
+float4 WavefrontExpand(uint2 id)
+{
+    int idx = GetLeafIndex(id);
+    if (idx >= _NodeCount) return float4(INF, STATE_UNREACHED, -1, 0);
+
+    float4 my = LoadPathNode(idx);
+    int myState = (int)round(my.y);
+
+    if (myState == STATE_VISITED)
+    {
+        return my;
+    }
+
+    if (myState == STATE_FRONTIER)
+    {
+        return float4(my.x, STATE_VISITED, my.z, 0);
+    }
+
+    int nbrs[6];
+    LoadNeighbors(idx, nbrs);
+
+    float bestCost = INF;
+    int bestParent = -1;
+
+    for (int i = 0; i < 6; i++)
+    {
+        int nIdx = nbrs[i];
+        if (nIdx < 0) continue;
+
+        float4 nd = LoadPathNode(nIdx);
+        int ndState = (int)round(nd.y);
+        if (ndState != STATE_FRONTIER) continue;
+
+        float newCost = nd.x + LoadLeafCost(idx);
+        if (newCost < bestCost)
+        {
+            bestCost = newCost;
+            bestParent = nIdx;
+        }
+    }
+
+    if (bestCost < INF)
+    {
+        return float4(bestCost, STATE_FRONTIER, (float)bestParent, 0);
+    }
+    else
+    {
+        return float4(INF, STATE_UNREACHED, -1, 0);
+    }
+}
+
+float4 Reset(uint2 id)
+{
+    int idx = GetLeafIndex(id);
+    if (idx >= _NodeCount) return float4(INF, STATE_UNREACHED, -1, 0);
+
+    if (idx == _StartIndex)
+    {
+        return float4(0.0, STATE_FRONTIER, -1, 0);
+    }
+    else
+    {
+        return float4(INF, STATE_UNREACHED, -1, 0);
+    }
+}
+
+float GoalDetect(uint2 id)
+{
+    float4 goal = LoadPathNode(_GoalIndex);
+    int goalState = (int)round(goal.y);
+    return (goalState >= STATE_VISITED) ? 1.0 : 0.0;
+}

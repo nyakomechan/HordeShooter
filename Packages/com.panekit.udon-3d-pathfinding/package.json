@@ -1,0 +1,22 @@
+{
+  "name": "com.panekit.udon-3d-pathfinding",
+  "displayName": "Udon 3D Pathfinding (panekit fork)",
+  "version": "0.1.6-panekit.1",
+  "unity": "2022.3",
+  "description": "GPU-based 3D pathfinding for VRChat worlds using Compeito",
+  "vpmDependencies": {
+    "com.vrchat.worlds": ">=3.10.3",
+    "com.imaginantia.compeito": ">=1.0.1"
+  },
+  "author": {
+    "name": "nyakomake",
+    "url": "https://github.com/nyakomechan"
+  },
+  "samples": [
+    {
+      "displayName": "Demo Scene",
+      "description": "Pathfinding demo with follow movement",
+      "path": "Samples~/Demo"
+    }
+  ]
+}

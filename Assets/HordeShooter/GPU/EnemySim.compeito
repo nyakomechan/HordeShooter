@@ -1,0 +1,456 @@
+#pragma kernel SimPos float4
+#pragma kernel SimState float4
+#pragma kernel SimMeta float4
+#pragma kernel HitTest float4
+
+// ===== Enemy horde GPU simulation (panekit) =====
+// 512 virtual enemies packed into 32x16 texel slots. One sim step = 3 dispatches
+// (SimPos, SimState, SimMeta); all three read the same "In" texture set and each
+// writes one "Out" texture. The Udon driver ping-pongs the sets every step.
+//
+// Slot layout:
+//   Pos    : xyz = world position, w = yaw (rad, forward = +Z at yaw 0)
+//   State  : x = hp, y = state enum, z = state timer, w = hit flash remaining
+//   Meta   : x = speed, y = variant, z = target player idx, w = anim phase
+//
+// CPU->GPU commands (8x1, consumed by the driver rewriting the texture each step):
+//   texel = (type, slot, param0, param1)
+//   type 1 DAMAGE: hp -= param0 (boss slots never die locally)
+//   type 2 KILL  : authoritative death (works for bosses)
+//   type 3 SPAWN : param0 = spawn point idx, param1 = variant
+//
+// Corrections (24x1): texel = (slot, targetPos.xyz); soft-pull, snap when far.
+//
+// Pathfinding: _FlowField is a voxel-indexed direction field baked from the
+// Udon-3D-Pathfinding BFS (see FlowBake.compeito). Long-range movement samples it;
+// short range (< _ChaseRange) chases the target directly. _VoxelToLeaf provides
+// wall solidity for the slide/clamp so enemies never enter wall voxels.
+
+#define STATE_INACTIVE 0
+#define STATE_SPAWNING 1
+#define STATE_CHASE    2
+#define STATE_ATTACK   3
+#define STATE_STAGGER  4
+#define STATE_DYING    5
+
+#define CMD_NONE   0
+#define CMD_DAMAGE 1
+#define CMD_KILL   2
+#define CMD_SPAWN  3
+#define CMD_WAKE   4
+
+#define VARIANT_NORMAL 0
+#define VARIANT_RUNNER 1
+#define VARIANT_BOSS   2
+
+Texture2D<float4> _PosIn;
+Texture2D<float4> _StateIn;
+Texture2D<float4> _MetaIn;
+
+Texture2D<float4> _PlayerTex;      // 16x1: xyz pos, w active (1/0)
+Texture2D<float4> _SpawnTex;       // 16x1: xyz pos, w active (1/0)
+Texture2D<float4> _CmdTex;         // 8x1:  x type, y slot, z param0, w param1
+Texture2D<float4> _CorrectionTex;  // 24x1: x slot (-1 none), yzw target pos
+
+Texture2D<float4> _FlowField;      // voxel-indexed: xyz dir, w valid
+Texture2D<float4> _VoxelToLeaf;    // voxel-indexed: r = leaf idx (-1 = wall)
+
+// Hitscan rays (8x1 CPU textures, written by the driver each shot frame):
+//   _RayOriginTex: xyz origin, w wall hit distance (ray is clipped at walls CPU-side)
+//   _RayDirTex:    xyz dir, w active (1/0)
+// HitTest output (8x1 RT): x = best distance (-1 none), y = best slot
+Texture2D<float4> _RayOriginTex;
+Texture2D<float4> _RayDirTex;
+
+float _HitRadius;
+
+int   _SlotCount;
+int   _SlotW;
+float _DeltaTime;
+float _MoveSpeed;
+float _ChaseRange;
+float _AttackRange;
+float _AttackDuration;
+float _StaggerDuration;
+float _SpawnDuration;
+float _DeathDuration;
+float _SeparationRadius;
+float _SeparationStrength;
+float _MaxSeparation;
+float _GroundY;
+float _SpawnJitter;
+
+int   _GSX;
+int   _GSY;
+int   _GSZ;
+float3 _GridOrigin;
+float _CellSize;
+float _UseFlow;
+
+int2 SlotTexel(int i) { return int2(i % _SlotW, i / _SlotW); }
+float4 LoadPos(int i)   { return _PosIn.Load(int3(SlotTexel(i), 0)); }
+float4 LoadState(int i) { return _StateIn.Load(int3(SlotTexel(i), 0)); }
+float4 LoadMeta(int i)  { return _MetaIn.Load(int3(SlotTexel(i), 0)); }
+
+float Hash(int n) { return frac(sin((float)n * 127.1) * 43758.5453); }
+
+int NearestPlayer(float3 pos)
+{
+    int best = -1;
+    float bestD2 = 1e30;
+    for (int p = 0; p < 16; p++)
+    {
+        float4 pl = _PlayerTex.Load(int3(p, 0, 0));
+        if (pl.w < 0.5) continue;
+        float3 d = pl.xyz - pos;
+        float d2 = dot(d, d);
+        if (d2 < bestD2) { bestD2 = d2; best = p; }
+    }
+    return best;
+}
+
+int3 WorldToVoxel(float3 w)
+{
+    float3 f = floor((w - _GridOrigin) / _CellSize);
+    return int3((int)f.x, (int)f.y, (int)f.z);
+}
+
+bool InGrid(int3 v)
+{
+    return v.x >= 0 && v.x < _GSX && v.y >= 0 && v.y < _GSY && v.z >= 0 && v.z < _GSZ;
+}
+
+bool IsSolidVoxel(int3 v)
+{
+    if (!InGrid(v)) return true;
+    int2 t = int2(v.x + v.z * _GSX, v.y);
+    return _VoxelToLeaf.Load(int3(t, 0)).r < -0.5;
+}
+
+bool IsSolidWorld(float3 w)
+{
+    return IsSolidVoxel(WorldToVoxel(w));
+}
+
+// Flow direction at a world position: 5-tap XZ average of the voxel field for a
+// smoother steering vector. Returns false when no valid flow is available.
+bool SampleFlow(float3 w, out float3 dir)
+{
+    dir = float3(0, 0, 0);
+    if (_UseFlow < 0.5) return false;
+    int3 v = WorldToVoxel(w);
+    if (!InGrid(v)) return false;
+    float weight = 0.0;
+    float3 acc = float3(0, 0, 0);
+    for (int i = 0; i < 5; i++)
+    {
+        int3 o = int3(0, 0, 0);
+        if (i == 1) o = int3(1, 0, 0);
+        else if (i == 2) o = int3(-1, 0, 0);
+        else if (i == 3) o = int3(0, 0, 1);
+        else if (i == 4) o = int3(0, 0, -1);
+        int3 s = v + o;
+        if (!InGrid(s)) continue;
+        float4 f = _FlowField.Load(int3(s.x + s.z * _GSX, s.y, 0));
+        if (f.w < 0.5) continue;
+        acc += f.xyz;
+        weight += 1.0;
+    }
+    if (weight < 0.5) return false;
+    dir = acc / weight;
+    float l = length(dir);
+    if (l < 0.001) return false;
+    dir = dir / l;
+    return true;
+}
+
+float4 SimPos(uint2 id)
+{
+    int i = (int)(id.y * _SlotW + id.x);
+    if (i >= _SlotCount) return float4(0, -1000, 0, 0);
+
+    float4 posIn = LoadPos(i);
+    float4 st = LoadState(i);
+    float4 mt = LoadMeta(i);
+    int state = (int)round(st.y);
+
+    float3 pos = posIn.xyz;
+    float yaw = posIn.w;
+
+    // Spawn command: teleport to spawn point with deterministic jitter.
+    for (int c = 0; c < 8; c++)
+    {
+        float4 cmd = _CmdTex.Load(int3(c, 0, 0));
+        if ((int)round(cmd.x) != CMD_SPAWN) continue;
+        if ((int)round(cmd.y) != i) continue;
+        float4 s = _SpawnTex.Load(int3((int)round(cmd.z), 0, 0));
+        float jx = (Hash(i * 3 + 1) - 0.5) * _SpawnJitter;
+        float jz = (Hash(i * 3 + 2) - 0.5) * _SpawnJitter;
+        pos = s.xyz + float3(jx, 0, jz);
+        yaw = Hash(i * 3 + 3) * 6.28318;
+    }
+
+    // Network correction: soft-pull toward the authoritative snapshot position.
+    for (int k = 0; k < 24; k++)
+    {
+        float4 corr = _CorrectionTex.Load(int3(k, 0, 0));
+        if ((int)round(corr.x) != i) continue;
+        float3 target = corr.yzw;
+        float d = distance(pos, target);
+        pos = (d > 5.0) ? target : lerp(pos, target, 0.35);
+    }
+
+    // Movement while alive and mobile.
+    if (state == STATE_CHASE || state == STATE_ATTACK)
+    {
+        float speed = mt.x;
+        int tIdx = (int)round(mt.z);
+        float3 targetPos = pos;
+        bool hasTarget = false;
+        if (tIdx >= 0)
+        {
+            float4 tp = _PlayerTex.Load(int3(tIdx, 0, 0));
+            if (tp.w > 0.5) { targetPos = tp.xyz; hasTarget = true; }
+        }
+        float3 toT = targetPos - pos;
+        float dist = length(toT);
+        float3 dir = (dist > 0.001) ? toT / dist : float3(0, 0, 1);
+
+        // Routing: follow the baked flow field for long range OR whenever the direct
+        // path is obstructed (enemies pressed against a wall must route around it
+        // instead of grinding into it).
+        float3 flowDir;
+        bool directClear = !IsSolidWorld(pos + dir * (0.35 + speed * 0.1) + float3(0, 0.5, 0));
+        if ((dist > _ChaseRange || !directClear) && SampleFlow(pos, flowDir))
+            dir = flowDir;
+
+        // Separation against every other live slot (O(N) per texel, O(N^2) total).
+        float3 sep = float3(0, 0, 0);
+        float sepR2 = _SeparationRadius * _SeparationRadius;
+        for (int j = 0; j < _SlotCount; j++)
+        {
+            if (j == i) continue;
+            float4 ost = LoadState(j);
+            int ostate = (int)round(ost.y);
+            if (ostate == STATE_INACTIVE || ostate == STATE_DYING) continue;
+            float3 d = pos - LoadPos(j).xyz;
+            float d2 = dot(d, d);
+            if (d2 > sepR2 || d2 < 1e-8) continue;
+            float dl = sqrt(d2);
+            sep += d / dl * (1.0 - dl / _SeparationRadius);
+        }
+        // Cap the separation so crowd pressure can never exceed the drive force
+        // (uncapped pressure plugs doorways with opposing flows and pins enemies).
+        float sepLen = sqrt(dot(sep, sep));
+        if (sepLen > _MaxSeparation) sep = sep / sepLen * _MaxSeparation;
+
+        float3 vel = dir * speed + sep * _SeparationStrength;
+        if (hasTarget && dist < _AttackRange) vel = sep * _SeparationStrength;
+
+        // Wall avoidance: probe along the ACTUAL step direction (separation can push
+        // laterally into walls), then hard-clamp: never integrate into a wall voxel.
+        float3 step = vel * _DeltaTime;
+        float probeY = pos.y + 0.5;
+        float stepLen = length(step);
+        float3 stepDir = (stepLen > 1e-6) ? step / stepLen : dir;
+        float3 probe = pos + step + stepDir * 0.35;
+        if (IsSolidWorld(float3(probe.x, probeY, probe.z)))
+        {
+            float3 sx = pos + float3(step.x, 0, 0);
+            float3 sz = pos + float3(0, 0, step.z);
+            bool solidX = IsSolidWorld(float3(sx.x + sign(step.x) * 0.35, probeY, sx.z));
+            bool solidZ = IsSolidWorld(float3(sz.x, probeY, sz.z + sign(step.z) * 0.35));
+            if (!solidX) step = float3(step.x, 0, 0);
+            else if (!solidZ) step = float3(0, 0, step.z);
+            else step = float3(0, 0, 0);
+        }
+        float3 newPos = pos + step;
+        bool blocked = IsSolidWorld(float3(newPos.x, probeY, newPos.z));
+        if (blocked)
+        {
+            // Crowd-jam escape: the step is fully clamped (separation pressing the
+            // enemy into a wall). Probe BOTH tangent directions with body radius
+            // and slide along whichever actually clears the wall corner; slot
+            // parity breaks ties so jammed enemies shuffle out of doorways.
+            float3 tangent = float3(-dir.z, 0, dir.x);
+            float nudgeLen = speed * _DeltaTime;
+            float3 e = pos + tangent * nudgeLen;
+            float3 w = pos - tangent * nudgeLen;
+            bool eClear = !IsSolidWorld(e + tangent * 0.35f + float3(0, 0.5, 0))
+                && !IsSolidWorld(float3(e.x, probeY, e.z));
+            bool wClear = !IsSolidWorld(w - tangent * 0.35f + float3(0, 0.5, 0))
+                && !IsSolidWorld(float3(w.x, probeY, w.z));
+            if (eClear && (!wClear || ((i & 1) == 0))) newPos = e;
+            else if (wClear) newPos = w;
+            else newPos = pos;
+        }
+        pos = newPos;
+        pos.y = _GroundY;
+        if (dot(vel, vel) > 0.0001) yaw = atan2(vel.x, vel.z);
+    }
+
+    return float4(pos, yaw);
+}
+
+float4 SimState(uint2 id)
+{
+    int i = (int)(id.y * _SlotW + id.x);
+    if (i >= _SlotCount) return float4(0, STATE_INACTIVE, 0, 0);
+
+    float4 st = LoadState(i);
+    float4 mt = LoadMeta(i);
+    float4 posIn = LoadPos(i);
+    int state = (int)round(st.y);
+    float hp = st.x;
+    float timer = st.z;
+    float flash = st.w;
+    int variant = (int)round(mt.y);
+
+    for (int c = 0; c < 8; c++)
+    {
+        float4 cmd = _CmdTex.Load(int3(c, 0, 0));
+        int type = (int)round(cmd.x);
+        if (type == CMD_NONE) continue;
+        if ((int)round(cmd.y) != i) continue;
+
+        if (type == CMD_DAMAGE)
+        {
+            if (state == STATE_INACTIVE || state == STATE_DYING) continue;
+            hp -= cmd.z;
+            flash = 0.2;
+            if (hp <= 0.0 && variant != VARIANT_BOSS)
+            {
+                state = STATE_DYING;
+                timer = 0.0;
+            }
+            else if (hp > 0.0)
+            {
+                state = STATE_STAGGER;
+                timer = 0.0;
+            }
+        }
+        else if (type == CMD_KILL)
+        {
+            if (state == STATE_INACTIVE || state == STATE_DYING) continue;
+            state = STATE_DYING;
+            timer = 0.0;
+        }
+        else if (type == CMD_SPAWN)
+        {
+            int spawnVariant = (int)round(cmd.w);
+            hp = (spawnVariant == VARIANT_BOSS) ? 400.0 : 30.0;
+            state = STATE_SPAWNING;
+            timer = 0.0;
+            flash = 0.0;
+        }
+        else if (type == CMD_WAKE)
+        {
+            // Late-joiner catch-up: activate an inactive slot at its corrected
+            // position (SimPos leaves pos untouched; the correction snaps it).
+            if (state != STATE_INACTIVE) continue;
+            int targetState = (int)round(cmd.z);
+            if (targetState < STATE_SPAWNING || targetState > STATE_STAGGER) targetState = STATE_CHASE;
+            state = targetState;
+            hp = 30.0;
+            timer = 0.0;
+            flash = 0.0;
+        }
+    }
+
+    timer += _DeltaTime;
+    flash = max(flash - _DeltaTime, 0.0);
+
+    if (state == STATE_SPAWNING && timer >= _SpawnDuration) { state = STATE_CHASE; timer = 0.0; }
+    else if (state == STATE_CHASE)
+    {
+        int tIdx = (int)round(mt.z);
+        if (tIdx >= 0)
+        {
+            float4 tp = _PlayerTex.Load(int3(tIdx, 0, 0));
+            if (tp.w > 0.5 && distance(posIn.xyz, tp.xyz) < _AttackRange)
+            {
+                state = STATE_ATTACK;
+                timer = 0.0;
+            }
+        }
+    }
+    else if (state == STATE_ATTACK && timer >= _AttackDuration) { state = STATE_CHASE; timer = 0.0; }
+    else if (state == STATE_STAGGER && timer >= _StaggerDuration) { state = STATE_CHASE; timer = 0.0; }
+    else if (state == STATE_DYING && timer >= _DeathDuration) { state = STATE_INACTIVE; timer = 0.0; hp = 0.0; }
+
+    return float4(hp, (float)state, timer, flash);
+}
+
+float4 SimMeta(uint2 id)
+{
+    int i = (int)(id.y * _SlotW + id.x);
+    if (i >= _SlotCount) return float4(0, 0, -1, 0);
+
+    float4 st = LoadState(i);
+    float4 mt = LoadMeta(i);
+    float4 posIn = LoadPos(i);
+    int state = (int)round(st.y);
+    int variant = (int)round(mt.y);
+
+    // Spawn command carries the variant.
+    for (int c = 0; c < 8; c++)
+    {
+        float4 cmd = _CmdTex.Load(int3(c, 0, 0));
+        if ((int)round(cmd.x) == CMD_SPAWN && (int)round(cmd.y) == i)
+            variant = (int)round(cmd.w);
+    }
+
+    // Sticky target selection: keep the current target unless the nearest
+    // player is clearly closer (~1.3x). Player positions are well synced by
+    // VRChat, so this makes the switch decision robust to small per-client
+    // enemy position differences and stops boundary flip-flopping (a major
+    // divergence source between clients).
+    int target = NearestPlayer(posIn.xyz);
+    int curTarget = (int)round(mt.z);
+    if (target != curTarget && curTarget >= 0 && target >= 0)
+    {
+        float4 curPl = _PlayerTex.Load(int3(curTarget, 0, 0));
+        if (curPl.w > 0.5)
+        {
+            float3 dc = curPl.xyz - posIn.xyz;
+            float3 dn = _PlayerTex.Load(int3(target, 0, 0)).xyz - posIn.xyz;
+            if (dot(dn, dn) > dot(dc, dc) * 0.6) target = curTarget;
+        }
+    }
+
+    float varMul = (variant == VARIANT_BOSS) ? 0.6 : ((variant == VARIANT_RUNNER) ? 1.5 : 1.0);
+    float speed = 0.0;
+    if (state == STATE_CHASE) speed = _MoveSpeed * varMul;
+    else if (state == STATE_ATTACK) speed = _MoveSpeed * varMul * 0.15;
+
+    float phase = mt.w + _DeltaTime * speed * 2.2;
+    return float4(speed, (float)variant, (float)target, phase);
+}
+
+// One texel per ray: ray-vs-sphere against every live slot, nearest wins.
+// Wall occlusion is pre-applied by the CPU via the wall distance in the origin texel.
+float4 HitTest(uint2 id)
+{
+    int ray = (int)id.x;
+    float4 ro = _RayOriginTex.Load(int3(ray, 0, 0));
+    float4 rd = _RayDirTex.Load(int3(ray, 0, 0));
+    if (rd.w < 0.5) return float4(-1.0, -1.0, 0, 0);
+
+    float bestT = ro.w;
+    int bestSlot = -1;
+    float r2 = _HitRadius * _HitRadius;
+    for (int j = 0; j < _SlotCount; j++)
+    {
+        float4 ost = _StateIn.Load(int3(SlotTexel(j), 0));
+        int ostate = (int)round(ost.y);
+        if (ostate == STATE_INACTIVE || ostate == STATE_DYING) continue;
+        // Hit sphere at chest height (the sim position is the feet).
+        float3 oc = _PosIn.Load(int3(SlotTexel(j), 0)).xyz + float3(0, 0.9, 0) - ro.xyz;
+        float t = dot(oc, rd.xyz);
+        if (t < 0.0) continue;
+        float d2 = dot(oc, oc) - t * t;
+        if (d2 > r2) continue;
+        if (t < bestT) { bestT = t; bestSlot = j; }
+    }
+    return float4(bestT, (float)bestSlot, 0, 0);
+}

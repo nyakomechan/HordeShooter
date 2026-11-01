@@ -1,0 +1,20 @@
+{
+    "name": "UdonPathfinding.Udon",
+    "rootNamespace": "com.nyakomake",
+    "references": [
+        "UdonSharp.Runtime",
+        "VRC.SDKBase",
+        "VRC.SDK3",
+        "VRC.Udon.Serialization.OdinSerializer",
+        "Compeito.Udon"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

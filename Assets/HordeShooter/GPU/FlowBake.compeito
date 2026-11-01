@@ -1,0 +1,54 @@
+#pragma kernel BakeFlow float4
+
+// ===== Flow field bake (panekit) =====
+// Converts the pathfinding BFS wavefront buffer (leaf-indexed, .b = parent leaf)
+// into a voxel-indexed direction field the enemy sim can sample with one fetch.
+//
+// Voxel texture layout (shared with the CPU upload and the sim):
+//   texel = (vx + vz * GSX, vy), texture size (GSX*GSZ) x GSY
+// Leaf texture layout (pathData AND _LeafVoxel — both leaf-indexed):
+//   texel = (leaf % _LeafTexW, leaf / _LeafTexW), _LeafTexW = GetFlowTexWidth()
+//
+// Output: xyz = unit direction toward the parent voxel (one BFS step toward the
+// flood source), w = 1 when valid. Walls and unreached voxels output 0.
+
+Texture2D<float4> _FlowData;    // leaf-indexed: x cost, y state, z parent leaf
+Texture2D<float4> _VoxelToLeaf; // voxel-indexed: r = leaf idx (-1 = wall)
+Texture2D<float4> _LeafVoxel;   // leaf-indexed: r = voxel idx (-1 = none)
+
+int _GSX;
+int _GSY;
+int _GSZ;
+int _LeafTexW;
+
+int LeafTexX(int leaf) { return leaf % _LeafTexW; }
+int LeafTexY(int leaf) { return leaf / _LeafTexW; }
+
+float4 BakeFlow(uint2 id)
+{
+    // id = voxel texel: x = vx + vz*GSX, y = vy
+    int vx = id.x % _GSX;
+    int vz = id.x / _GSX;
+    int vy = id.y;
+
+    float leafF = _VoxelToLeaf.Load(int3(id, 0)).r;
+    int leaf = (int)round(leafF);
+    if (leaf < 0) return float4(0, 0, 0, 0);   // wall
+
+    float4 fd = _FlowData.Load(int3(LeafTexX(leaf), LeafTexY(leaf), 0));
+    int parent = (int)round(fd.b);
+    if (parent < 0 || parent == leaf) return float4(0, 0, 0, 0);   // unreached or source
+
+    float pvf = _LeafVoxel.Load(int3(LeafTexX(parent), LeafTexY(parent), 0)).r;
+    int pvi = (int)round(pvf);
+    if (pvi < 0) return float4(0, 0, 0, 0);
+
+    int px = pvi % _GSX;
+    int py = (pvi / _GSX) % _GSY;
+    int pz = pvi / (_GSX * _GSY);
+
+    float3 dir = float3((float)(px - vx), (float)(py - vy), (float)(pz - vz));
+    float len = length(dir);
+    if (len < 0.0001) return float4(0, 0, 0, 0);
+    return float4(dir / len, 1.0);
+}
