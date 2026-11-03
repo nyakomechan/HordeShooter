@@ -45,6 +45,10 @@ public partial class HordeNet : UdonSharpBehaviour
     [UdonSynced] public int quotaProgress;    // kills so far / elapsed seconds
     [UdonSynced] public int waveEndRevision;  // bumped at wave end: remotes despawn all remaining enemies
     [UdonSynced] public int shopReadyBits;    // bit (playerId-1) set while that player is ready in the shop
+    // ---- ownership takeover (M7f): lets a new owner resume the director mid-phase ----
+    [UdonSynced] public int waveNextSlot;     // next slot the maintain spawner will allocate
+    [UdonSynced] public int shopRemaining;    // seconds left in the shop phase (phase 2)
+    [UdonSynced] public int gameOverRemaining; // seconds left of the game-over grace (phase 3)
 
     // ---- event ring ----
     public const int EV_NONE = 0;
@@ -267,10 +271,22 @@ public partial class HordeNet : UdonSharpBehaviour
 
     // ================= owner-side: proximity snapshot =================
 
+    private float _ownerAlignTimer;
+
     void Update()
     {
         FlushCombatBatch();
         DrainCorrectionQueue();
+        // ownership unification (M7f): keep HordeSim + HordeNetCatchup owned by
+        // the same player as HordeNet, so every system always shares one owner
+        // even after the old owner leaves (VRChat transfers each object
+        // independently and the per-object pick is not guaranteed to agree).
+        _ownerAlignTimer += Time.deltaTime;
+        if (_ownerAlignTimer >= 1f)
+        {
+            _ownerAlignTimer = 0f;
+            _AlignOwnership();
+        }
         if (_IsAuthority())
         {
             _WaveTick();
@@ -281,6 +297,59 @@ public partial class HordeNet : UdonSharpBehaviour
                 _PackSnapshot();
             }
         }
+    }
+
+    /// <summary>Aligns HordeSim / HordeNetCatchup ownership to HordeNet's owner (1Hz poll).</summary>
+    private void _AlignOwnership()
+    {
+        VRCPlayerApi netOwner = Networking.GetOwner(gameObject);
+        if (netOwner == null || !netOwner.IsValid()) return;
+        if (hordeSim != null)
+        {
+            VRCPlayerApi simOwner = Networking.GetOwner(hordeSim.gameObject);
+            if (simOwner == null || !simOwner.IsValid() || simOwner.playerId != netOwner.playerId)
+                Networking.SetOwner(netOwner, hordeSim.gameObject);
+        }
+        if (catchup != null)
+        {
+            VRCPlayerApi cuOwner = Networking.GetOwner(catchup.gameObject);
+            if (cuOwner == null || !cuOwner.IsValid() || cuOwner.playerId != netOwner.playerId)
+                Networking.SetOwner(netOwner, catchup.gameObject);
+        }
+    }
+
+    /// <summary>
+    /// Ownership transfer (e.g. the old owner left): if THIS client became the
+    /// HordeNet owner, reconstruct the director's runtime state from the synced
+    /// fields so the wave/shop/game-over flow continues seamlessly, and pull
+    /// HordeSim + HordeNetCatchup under the same owner.
+    /// </summary>
+    public override void OnOwnershipTransferred(VRCPlayerApi player)
+    {
+        _AlignOwnership();
+        if (player == null || !player.IsValid()) return;
+        if (player.playerId != Networking.LocalPlayer.playerId) return;   // someone else became owner
+        _TakeOverDirector();
+    }
+
+    /// <summary>New owner: resume the director from the last synced state.</summary>
+    private void _TakeOverDirector()
+    {
+        _waveNextSlot = waveNextSlot;
+        _waveBossSpawned = quotaType == 2 && _CountBossSlots() > 0;
+        if (gamePhase == 1 && quotaType == 1)
+            _waveStartTime = Time.time - quotaProgress;   // survive quota continues where it left off
+        if (gamePhase == 2)
+            _shopUntil = Time.time + shopRemaining;
+        if (gamePhase == 3)
+            _gameOverAt = Time.time - (gameOverResetSeconds - gameOverRemaining);
+        _maintainTimer = 0f;
+        _waveEndCheckTimer = 0f;
+        _damageTimer = 0f;
+        _snapTimer = snapshotInterval;   // pack a fresh snapshot immediately
+        Debug.Log("[HordeNet] ownership taken over: phase=" + gamePhase + " wave=" + waveNumber
+            + " nextSlot=" + _waveNextSlot + " shopRemaining=" + shopRemaining
+            + " gameOverRemaining=" + gameOverRemaining);
     }
 
     private void _RefreshPlayers()
@@ -369,6 +438,10 @@ public partial class HordeNet : UdonSharpBehaviour
             snapData[k * 3 + 2] = (yaw8 << 24) | (hp8 << 16) | (st8 << 8);
         }
         snapRevision++;
+        // ownership-takeover state: lets a new owner resume the director
+        waveNextSlot = _waveNextSlot;
+        shopRemaining = (gamePhase == 2) ? (int)Mathf.Max(0f, _shopUntil - Time.time) : 0;
+        gameOverRemaining = (gamePhase == 3) ? (int)Mathf.Max(0f, gameOverResetSeconds - (Time.time - _gameOverAt)) : 0;
         RequestSerialization();
     }
 

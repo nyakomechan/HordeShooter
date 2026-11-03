@@ -20,7 +20,16 @@ public class HordeNetCatchup : UdonSharpBehaviour
     /// <summary>Owner: build the full-slot snapshot from the sim mirrors and send it.</summary>
     public void PackAndSend()
     {
-        if (!Networking.IsOwner(gameObject)) return;
+        // authority check follows HordeNet (ownership is aligned across systems,
+        // but HordeNet is the source of truth for who runs the game)
+        if (hordeNet != null)
+        {
+            if (!Networking.IsOwner(hordeNet.gameObject)) return;
+        }
+        else if (!Networking.IsOwner(gameObject))
+        {
+            return;
+        }
         if (hordeSim == null) return;
         float[] mx = hordeSim.mirrorPosX;
         float[] my = hordeSim.mirrorPosY;

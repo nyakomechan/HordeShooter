@@ -71,6 +71,28 @@ M0-M5 のホードシューターにローグライト形式（ヴァンパイ�
 - Button.onClick → `SendCustomEvent("_TryStart")` を
   `UnityEventTools.AddStringPersistentListener` でバインド
 
+### owner の統一と引き継ぎ（2026-11-03 追加）
+
+- **全システムで同一 owner**: HordeNet（進行・敵ステータス裁定）/ HordeSim（GPU シム）/
+  HordeNetCatchup（遅参加スナップショット）の 3 オブジェクトの所有権を
+  HordeNet の owner に統一。1Hz のポーリングで不整合を検出して `SetOwner` で揃え、
+  `OnOwnershipTransferred` でも即座に揃える
+- **新 owner の引き継ぎ**: 同期フィールドに `waveNextSlot` / `shopRemaining` /
+  `gameOverRemaining` を追加（3Hz スナップショットで更新）。owner が退出 etc. で
+  切り替わった時、新 owner が `_TakeOverDirector()` でディレクタの実行状態を復元:
+  - 次湧きスロット（waveNextSlot）を引き継ぎ（二重湧き防止）
+  - 生存ノルマは `quotaProgress` から経過時間を復元して継続
+  - ショップ/ゲームオーバーの残り秒を引き継いでタイマー再構築
+  - ボス wave の `_waveBossSpawned` を bossSlots から復元
+- `HordeNetCatchup.PackAndSend` の権限チェックを HordeNet の owner 基準に変更
+- **MultiSim 検証済み**: ホスト→クローンへ `SetOwner` で移譲 →
+  クローンが net/sim/catchup 全ての owner に（両エディタで aligned=True）→
+  「ownership taken over: phase=1 wave=2 nextSlot=88」のログで状態復元を確認 →
+  生存ノルマのタイマーも継続（prog 5→28）→ その後ゲームオーバー →
+  新 owner で自動リセット完了（phase=0, clearRev=1）
+- 注意: `playerDamagePerTick` 等のデバッグ用 SetProgramVariable はローカル変更であり
+  同期されない（owner が変わると新 owner のシリアライズ値が使われる）
+
 ### M7d — 敵バリエーション 8 種（commit 435a8ab）
 
 - variant テーブル（EnemySim.compeito / EnemyAnim.cginc / HordeNet.Wave.cs の3箇所で同期）:
