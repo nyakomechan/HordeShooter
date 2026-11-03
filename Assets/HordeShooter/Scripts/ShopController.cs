@@ -167,12 +167,10 @@ public class ShopController : UdonSharpBehaviour
 
     private string _CardName(int id)
     {
-        // barrel cards are packed: CARD_BARREL_BASE + type*10 + level (Lv1..5)
-        if (id >= GunController.CARD_BARREL_BASE + 11 && id <= GunController.CARD_BARREL_BASE + 45)
-        {
-            int v = id - GunController.CARD_BARREL_BASE;
-            return _BarrelName(v / 10) + " Lv" + (v % 10);
-        }
+        if (id == GunController.CARD_GATLING) return "GATLING";
+        if (id == GunController.CARD_SHOTGUN) return "SHOTGUN";
+        if (id == GunController.CARD_DRILL) return "DRILL";
+        if (id == GunController.CARD_RAILGUN) return "RAILGUN";
         if (id == GunController.CARD_DAMAGE) return "DAMAGE UP";
         if (id == GunController.CARD_RATE) return "FIRE RATE UP";
         if (id == GunController.CARD_SPREAD) return "ACCURACY UP";
@@ -182,21 +180,12 @@ public class ShopController : UdonSharpBehaviour
         return "?";
     }
 
-    private string _BarrelName(int type)
-    {
-        if (type == 1) return "GATLING";
-        if (type == 2) return "SHOTGUN";
-        if (type == 3) return "DRILL";
-        if (type == 4) return "RAILGUN";
-        return "BASIC";
-    }
-
     private string _CardDesc(int id)
     {
-        if (id >= GunController.CARD_BARREL_BASE + 11 && id <= GunController.CARD_BARREL_BASE + 45)
-        {
-            return "same type+Lv equipped -> level up";
-        }
+        if (id == GunController.CARD_GATLING) return "add barrel: high rate / low dmg";
+        if (id == GunController.CARD_SHOTGUN) return "add barrel: 6-pellet blast";
+        if (id == GunController.CARD_DRILL) return "add barrel: short range / huge dmg";
+        if (id == GunController.CARD_RAILGUN) return "add barrel: sniper shot";
         if (id == GunController.CARD_DAMAGE) return "all barrels +25% damage";
         if (id == GunController.CARD_RATE) return "all barrels +20% fire rate";
         if (id == GunController.CARD_SPREAD) return "spread -30%";
