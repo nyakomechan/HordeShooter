@@ -124,7 +124,7 @@ public partial class HordeSim : UdonSharpBehaviour
     private Color[] _rayOriginColors;
     private Color[] _rayDirColors;
     private int _rayCount;          // rays queued for the next HitTest dispatch
-    private const int MAX_RAYS = 8;
+    public const int MAX_RAYS = 16;
     private UdonSharpBehaviour _hitListener;
     private string _hitListenerEvent = "_OnHitResults";
 
@@ -186,7 +186,8 @@ public partial class HordeSim : UdonSharpBehaviour
         for (int i = 0; i < MAX_RAYS; i++)
         {
             _rayOriginColors[i] = new Color(0f, 0f, 0f, 0f);
-            _rayDirColors[i] = new Color(0f, 0f, 0f, 0f);
+            // dir.w = per-ray hit radius (0 = default _HitRadius); -1 = inactive
+            _rayDirColors[i] = new Color(0f, 0f, 0f, -1f);
         }
         _rayOriginTex.SetPixels(_rayOriginColors);
         _rayOriginTex.Apply(false);
@@ -400,6 +401,33 @@ public partial class HordeSim : UdonSharpBehaviour
         ResetAll();
     }
 
+    private int _debugRaySlot;
+
+    /// <summary>
+    /// Debug: queue 3 test rays at the first live slot — A: straight down with
+    /// radius 1.2, B: offset +0.8 m in x with radius 1.2 (default 0.45 misses),
+    /// C: offset +2.0 m with the default radius (must miss even with mirror
+    /// staleness drift). Results land in hitRaySlot[0..2]; the targeted slot is
+    /// left in _debugRaySlot.
+    /// </summary>
+    public void _DebugQueueTestRays()
+    {
+        if (!_initialized) return;
+        int slot = -1;
+        for (int i = 0; i < slotCount; i++)
+        {
+            int s = (int)mirrorState[i];
+            if (s >= 1 && s <= 4) { slot = i; break; }
+        }
+        _debugRaySlot = slot;
+        if (slot < 0) return;
+        float x = mirrorPosX[slot];
+        float z = mirrorPosZ[slot];
+        QueueRayRadius(new Vector3(x, 8f, z), Vector3.down, 200f, 1.2f);
+        QueueRayRadius(new Vector3(x + 0.8f, 8f, z), Vector3.down, 200f, 1.2f);
+        QueueRayRadius(new Vector3(x + 2.0f, 8f, z), Vector3.down, 200f, 0f);
+    }
+
     public void _DebugLogStatus()
     {
         int alive = 0;
@@ -550,13 +578,25 @@ public partial class HordeSim : UdonSharpBehaviour
 
     // ---- hitscan ray queue ----
 
-    /// <summary>Queues a hitscan ray (max 8 per frame; extras are dropped).</summary>
+    /// <summary>Queues a hitscan ray with the default hit radius (max 16 per frame; extras are dropped).</summary>
     public void QueueRay(Vector3 origin, Vector3 dir, float wallDist)
     {
-        if (_rayCount >= MAX_RAYS) return;
+        QueueRayRadius(origin, dir, wallDist, 0f);
+    }
+
+    /// <summary>
+    /// Queues a hitscan ray with a custom hit radius (drill etc.).
+    /// radius 0 = default _HitRadius; the radius rides _RayDirTex.w (was the
+    /// active flag — inactive rays are now marked w = -1).
+    /// Returns the ray id (index into hitRay*) or -1 when the batch is full.
+    /// </summary>
+    public int QueueRayRadius(Vector3 origin, Vector3 dir, float wallDist, float radius)
+    {
+        if (_rayCount >= MAX_RAYS) return -1;
         _rayOriginColors[_rayCount] = new Color(origin.x, origin.y, origin.z, wallDist);
-        _rayDirColors[_rayCount] = new Color(dir.x, dir.y, dir.z, 1f);
+        _rayDirColors[_rayCount] = new Color(dir.x, dir.y, dir.z, radius);
         _rayCount++;
+        return _rayCount - 1;
     }
 
     /// <summary>Registers the behaviour notified when a ray batch resolves.</summary>

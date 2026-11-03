@@ -44,6 +44,30 @@ public static class HordeGunFxSetup
             new Vector2(0.5f, 0.5f), new Vector2(0f, -34f), new Vector2(260, 30), 24, TextAnchor.MiddleCenter, new Color(1f, 0.35f, 0.25f));
         reloadText.text = "RELOADING...";
         reloadText.gameObject.SetActive(false);
+        Text loadoutText = MakeText(canvasGo.transform, "LoadoutText", font,
+            new Vector2(0.5f, 0.5f), new Vector2(0f, 34f), new Vector2(260, 26), 20, TextAnchor.MiddleCenter, new Color(0.7f, 0.9f, 1f));
+        loadoutText.text = "BASIC";
+
+        // ---- barrel visuals (extra barrels beyond the first, toggled by loadout) ----
+        var visuals = new GameObject[4];
+        float[] slotX = new float[] { -0.3f, -0.1f, 0.1f, 0.3f };
+        for (int i = 0; i < 4; i++)
+        {
+            string slotName = "BarrelSlot" + (i + 1);
+            var slotGo = gunGo.transform.Find(slotName)?.gameObject;
+            if (slotGo == null)
+            {
+                slotGo = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                slotGo.name = slotName;
+                slotGo.transform.SetParent(gunGo.transform, false);
+                slotGo.transform.localPosition = new Vector3(slotX[i], 0.62f, 0.05f);
+                slotGo.transform.localScale = new Vector3(0.35f, 0.35f, 0.75f);
+                var col = slotGo.GetComponent<Collider>();
+                if (col != null) Object.DestroyImmediate(col);
+            }
+            slotGo.SetActive(false);
+            visuals[i] = slotGo;
+        }
 
         // ---- muzzle flash ----
         var oldMuzzle = gunGo.transform.Find("Muzzle");
@@ -72,6 +96,8 @@ public static class HordeGunFxSetup
         // ---- wire ----
         gun.ammoText = ammoText;
         gun.reloadText = reloadText;
+        gun.loadoutText = loadoutText;
+        gun.barrelVisuals = visuals;
         gun.muzzlePs = ps;
         UdonSharpEditorUtility.CopyProxyToUdon(gun);
 

@@ -55,10 +55,10 @@ Texture2D<float4> _CorrectionTex;  // 24x1: x slot (-1 none), yzw target pos
 Texture2D<float4> _FlowField;      // voxel-indexed: xyz dir, w valid
 Texture2D<float4> _VoxelToLeaf;    // voxel-indexed: r = leaf idx (-1 = wall)
 
-// Hitscan rays (8x1 CPU textures, written by the driver each shot frame):
+// Hitscan rays (16x1 CPU textures, written by the driver each shot frame):
 //   _RayOriginTex: xyz origin, w wall hit distance (ray is clipped at walls CPU-side)
-//   _RayDirTex:    xyz dir, w active (1/0)
-// HitTest output (8x1 RT): x = best distance (-1 none), y = best slot
+//   _RayDirTex:    xyz dir, w per-ray hit radius (0 = default _HitRadius, -1 = inactive)
+// HitTest output (16x1 RT): x = best distance (-1 none), y = best slot
 Texture2D<float4> _RayOriginTex;
 Texture2D<float4> _RayDirTex;
 
@@ -437,16 +437,18 @@ float4 SimMeta(uint2 id)
 
 // One texel per ray: ray-vs-sphere against every live slot, nearest wins.
 // Wall occlusion is pre-applied by the CPU via the wall distance in the origin texel.
+// dir.w = per-ray hit radius (0 = default _HitRadius); -1 = inactive ray.
 float4 HitTest(uint2 id)
 {
     int ray = (int)id.x;
     float4 ro = _RayOriginTex.Load(int3(ray, 0, 0));
     float4 rd = _RayDirTex.Load(int3(ray, 0, 0));
-    if (rd.w < 0.5) return float4(-1.0, -1.0, 0, 0);
+    if (rd.w < -0.5) return float4(-1.0, -1.0, 0, 0);
 
     float bestT = ro.w;
     int bestSlot = -1;
-    float r2 = _HitRadius * _HitRadius;
+    float rad = (rd.w > 0.001) ? rd.w : _HitRadius;
+    float r2 = rad * rad;
     for (int j = 0; j < _SlotCount; j++)
     {
         float4 ost = _StateIn.Load(int3(SlotTexel(j), 0));
