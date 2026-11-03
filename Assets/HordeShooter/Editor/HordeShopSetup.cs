@@ -138,6 +138,82 @@ public static class HordeShopSetup
         spawnGo.transform.localPosition = new Vector3(0f, 0f, 3.5f);
         spawnGo.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
 
+        // ---- game start UI (same room, eye-level panel between the player and the card canvas) ----
+        var gsCanvasGo = new GameObject("GameStartCanvas");
+        gsCanvasGo.transform.SetParent(root.transform, false);
+        gsCanvasGo.transform.localPosition = new Vector3(0f, 1.5f, 0.8f);
+        gsCanvasGo.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+        gsCanvasGo.transform.localScale = new Vector3(0.01f, 0.01f, 0.01f);
+        var gsCanvas = gsCanvasGo.AddComponent<Canvas>();
+        gsCanvas.renderMode = RenderMode.WorldSpace;
+        gsCanvasGo.AddComponent<GraphicRaycaster>();
+        gsCanvasGo.AddComponent<VRCUiShape>();
+        var gsRt = gsCanvasGo.GetComponent<RectTransform>();
+        gsRt.sizeDelta = new Vector2(400, 120);
+
+        var gsPanel = new GameObject("GameStartPanel");
+        gsPanel.transform.SetParent(gsCanvasGo.transform, false);
+        var gsPrt = gsPanel.AddComponent<RectTransform>();
+        gsPrt.anchorMin = Vector2.zero; gsPrt.anchorMax = Vector2.one;
+        gsPrt.offsetMin = Vector2.zero; gsPrt.offsetMax = Vector2.zero;
+        var gsBg = gsPanel.AddComponent<Image>();
+        gsBg.color = new Color(0.05f, 0.07f, 0.1f, 0.85f);
+        gsBg.raycastTarget = true;
+
+        var gsBtnGo = new GameObject("StartButton");
+        gsBtnGo.transform.SetParent(gsPanel.transform, false);
+        var gsBtnRt = gsBtnGo.AddComponent<RectTransform>();
+        gsBtnRt.anchorMin = new Vector2(0f, 0.5f); gsBtnRt.anchorMax = new Vector2(0f, 0.5f);
+        gsBtnRt.pivot = new Vector2(0f, 0.5f);
+        gsBtnRt.anchoredPosition = new Vector2(15f, 0f);
+        gsBtnRt.sizeDelta = new Vector2(230, 130);
+        var gsBtnImg = gsBtnGo.AddComponent<Image>();
+        gsBtnImg.color = new Color(0.15f, 0.55f, 0.25f, 0.95f);
+        gsBtnImg.raycastTarget = true;
+        var gsBtn = gsBtnGo.AddComponent<Button>();
+        var gsNav = new Navigation();
+        gsNav.mode = Navigation.Mode.None;
+        gsBtn.navigation = gsNav;
+        var gsBtnTextGo = new GameObject("Text");
+        gsBtnTextGo.transform.SetParent(gsBtnGo.transform, false);
+        var gsBtnTextRt = gsBtnTextGo.AddComponent<RectTransform>();
+        gsBtnTextRt.anchorMin = Vector2.zero; gsBtnTextRt.anchorMax = Vector2.one;
+        gsBtnTextRt.offsetMin = Vector2.zero; gsBtnTextRt.offsetMax = Vector2.zero;
+        var gsBtnText = gsBtnTextGo.AddComponent<Text>();
+        gsBtnText.font = font;
+        gsBtnText.fontSize = 40;
+        gsBtnText.alignment = TextAnchor.MiddleCenter;
+        gsBtnText.color = Color.white;
+        gsBtnText.raycastTarget = false;
+        gsBtnText.text = "GAME START";
+
+        var gsLabelGo = new GameObject("OwnerLabel");
+        gsLabelGo.transform.SetParent(gsPanel.transform, false);
+        var gsLabelRt = gsLabelGo.AddComponent<RectTransform>();
+        gsLabelRt.anchorMin = new Vector2(1f, 0.5f); gsLabelRt.anchorMax = new Vector2(1f, 0.5f);
+        gsLabelRt.pivot = new Vector2(1f, 0.5f);
+        gsLabelRt.anchoredPosition = new Vector2(-15f, 0f);
+        gsLabelRt.sizeDelta = new Vector2(230, 130);
+        var gsLabel = gsLabelGo.AddComponent<Text>();
+        gsLabel.font = font;
+        gsLabel.fontSize = 30;
+        gsLabel.alignment = TextAnchor.MiddleCenter;
+        gsLabel.color = new Color(1f, 0.85f, 0.4f);
+        gsLabel.raycastTarget = false;
+        gsLabel.text = "START: ...";
+
+        // game start behaviour (own GameObject: MultiSim bundles vars per GameObject)
+        var gsUiGo = new GameObject("GameStartUI");
+        gsUiGo.transform.position = origin;
+        var gsUi = gsUiGo.AddUdonSharpComponent<HordeGameStartUI>();
+        gsUi.hordeNet = net;
+        gsUi.ownerLabel = gsLabel;
+        gsUi.panelRoot = gsPanel;
+        UdonSharpEditorUtility.CopyProxyToUdon(gsUi);
+        // Button.onClick -> HordeGameStartUI._TryStart (custom method, exact name)
+        var gsUiUdon = UdonSharpEditorUtility.GetBackingUdonBehaviour(gsUi);
+        UnityEventTools.AddStringPersistentListener(gsBtn.onClick, gsUiUdon.SendCustomEvent, "_TryStart");
+
         // controller
         var ctrlGo = new GameObject("ShopController");
         ctrlGo.transform.position = origin;

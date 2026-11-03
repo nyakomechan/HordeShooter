@@ -58,6 +58,19 @@ M0-M5 のホードシューターにローグライト形式（ヴァンパイ�
   （`HordeShooter/Setup Shop Space` メニュー、再実行で安全に再構築）
 - ラベルは uGUI Text（TextMesh.text は Udon 非対応のため）
 
+### ゲーム開始 UI（uGUI Canvas、ショップと同じ部屋）
+
+- `HordeGameStartUI`（新規）: ショップ部屋のカード Canvas の手前（目線の高さ、
+  4m×1.2m パネル）に「GAME START」ボタン＋owner のプレイヤー名表示
+  （`START: <owner displayName>`、2Hz で更新 — master 交代に追従）
+- **owner 限定**: `_TryStart` が `Networking.IsOwner(hordeNet.gameObject)` を確認
+  （非 owner のクリックは無視）。アリーナ内の WaveStart キューブも同様に owner 限定
+  （ゲームオーバー自動リセット後にプレイヤーがアリーナへ湧くため、
+  アリーナ内のフォールバックとしてキューブを残存）
+- パネルはロビー（phase 0）のみ表示、wave 中は非表示
+- Button.onClick → `SendCustomEvent("_TryStart")` を
+  `UnityEventTools.AddStringPersistentListener` でバインド
+
 ### M7d — 敵バリエーション 8 種（commit 435a8ab）
 
 - variant テーブル（EnemySim.compeito / EnemyAnim.cginc / HordeNet.Wave.cs の3箇所で同期）:
