@@ -328,7 +328,9 @@ public partial class HordeNet : UdonSharpBehaviour
     {
         _AlignOwnership();
         if (player == null || !player.IsValid()) return;
-        if (player.playerId != Networking.LocalPlayer.playerId) return;   // someone else became owner
+        VRCPlayerApi me = Networking.LocalPlayer;
+        if (me == null || !me.IsValid()) return;   // early init: LocalPlayer not ready yet
+        if (player.playerId != me.playerId) return;   // someone else became owner
         _TakeOverDirector();
     }
 

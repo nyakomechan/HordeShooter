@@ -31,6 +31,7 @@ public class ShopController : UdonSharpBehaviour
     private Quaternion _returnRot;
     private bool _hasReturn;
     private bool _inShop;
+    private bool _inLobby;
     private bool _picked;
 
     void Update()
@@ -39,14 +40,35 @@ public class ShopController : UdonSharpBehaviour
         int phase = hordeNet.gamePhase;
         if (phase == _lastPhase) return;
         if (phase == 2) _EnterShop();
+        else if (phase == 0) _EnterLobby();
         else if (_inShop) _ExitShop();
+        else if (_inLobby && phase == 1) _LeaveLobby();
         _lastPhase = phase;
     }
 
     // ================= shop flow =================
 
+    /// <summary>Lobby (phase 0): everyone gathers in the shop room — the GAME
+    /// START panel lives here. Also warps fresh joiners in during the lobby.</summary>
+    private void _EnterLobby()
+    {
+        _inLobby = true;
+        _inShop = false;
+        _hasReturn = false;
+        if (shopSpawn != null) _TeleportTo(shopSpawn.position, shopSpawn.rotation);
+    }
+
+    /// <summary>The game started from the lobby: respawn at the arena spawn point.</summary>
+    private void _LeaveLobby()
+    {
+        _inLobby = false;
+        VRCPlayerApi me = Networking.LocalPlayer;
+        if (me != null && me.IsValid()) me.Respawn();
+    }
+
     private void _EnterShop()
     {
+        _inLobby = false;
         _EnsureGun();
         VRCPlayerApi me = Networking.LocalPlayer;
         if (me != null && me.IsValid())

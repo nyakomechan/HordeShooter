@@ -66,7 +66,7 @@ public class HordeHUD : UdonSharpBehaviour
             if (phase == 1) waveText.text = "WAVE " + wave;
             else if (phase == 2) waveText.text = "SHOP";
             else if (phase == 3) waveText.text = "GAME OVER - RESTARTING...";
-            else waveText.text = "PRESS THE START CUBE";
+            else waveText.text = "LOBBY - SHOP で GAME START";
         }
         if (quotaText != null)
         {
@@ -103,16 +103,15 @@ public class HordeHUD : UdonSharpBehaviour
         }
         else if (hp > 0f && _downed)
         {
-            // revived (wave cleared by the team, or game-over auto reset)
+            // revived (wave cleared by the team, or game-over auto reset).
+            // positioning is handled by the ShopController: the lobby and the
+            // shop are the same room now, so it warps the player there.
             _downed = false;
             me.SetWalkSpeed(2f);
             me.SetRunSpeed(4f);
             me.SetStrafeSpeed(2f);
             me.SetJumpImpulse(3f);
             if (downOverlay != null) downOverlay.SetActive(false);
-            // after a game-over reset everyone respawns at the world spawn point
-            // via VRChat's native respawn (no manual Y alignment needed)
-            if (hordeNet.gamePhase == 0) me.Respawn();
         }
 
         // boss bar: first registered boss slot that is alive on the local mirror

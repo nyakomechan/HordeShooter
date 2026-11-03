@@ -31,21 +31,13 @@ public static class HordeHudSetup
 
         HordeAudioBuilder.BuildAll();
 
-        // ---- wave start cube ----
-        RecreateCube("WaveStart", new Vector3(-1.5f, 1.0f, 3.5f), (go) =>
-        {
-            var start = go.AddUdonSharpComponent<HordeWaveStart>();
-            start.hordeNet = net;
-            UdonSharpEditorUtility.CopyProxyToUdon(start);
-        });
-
-        // ---- game restart cube ----
-        RecreateCube("GameRestart", new Vector3(-3.0f, 1.0f, 3.5f), (go) =>
-        {
-            var restart = go.AddUdonSharpComponent<HordeGameRestart>();
-            restart.hordeNet = net;
-            UdonSharpEditorUtility.CopyProxyToUdon(restart);
-        });
+        // WaveStart / GameRestart cubes were removed (M7f): the game starts from
+        // the uGUI panel in the shop room (the lobby), and game over auto-resets.
+        // Delete any leftovers from older setups.
+        var oldStart = GameObject.Find("WaveStart");
+        if (oldStart != null) Object.DestroyImmediate(oldStart);
+        var oldRestart = GameObject.Find("GameRestart");
+        if (oldRestart != null) Object.DestroyImmediate(oldRestart);
 
         // ---- debug auto-spawn off (wave director replaces it) ----
         var dbg = GameObject.Find("DebugSpawn200");
