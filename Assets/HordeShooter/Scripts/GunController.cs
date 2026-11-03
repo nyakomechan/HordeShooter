@@ -58,6 +58,8 @@ public class GunController : UdonSharpBehaviour
     [Header("Debug (driven via SetProgramVariable + SendCustomEvent)")]
     public int debugTestShots;
     public int debugCard;
+    [Tooltip("Debug damage multiplier applied to every barrel (1 = normal). Set on the Gun template before play.")]
+    public float debugDamageMul = 1f;
 
     // ---- barrel base stat tables (type index 0..4, filled in Start) ----
     private float[] _typeDamage;
@@ -179,7 +181,7 @@ public class GunController : UdonSharpBehaviour
         if (now < _barrelNextFire[b] || now < _barrelReloadUntil[b]) return;
         int t = _barrelType[b];
         int lvl = _barrelLevel[b];
-        float dmg = _typeDamage[t] * _dmgMul * (1f + 0.25f * (lvl - 1));
+        float dmg = _typeDamage[t] * _dmgMul * debugDamageMul * (1f + 0.25f * (lvl - 1));
         float interval = _typeInterval[t] / (_rateMul * (1f + 0.06f * (lvl - 1)));
         int pellets = _typePellets[t];
         float spread = _typeSpread[t] * _spreadMul;
