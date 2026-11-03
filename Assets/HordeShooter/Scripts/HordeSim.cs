@@ -25,6 +25,8 @@ public partial class HordeSim : UdonSharpBehaviour
     public Mesh enemyMesh;            // built by EnemyMeshBuilder
     public Mesh[] variantMeshes;      // M7d: per-variant meshes (8; fallback = enemyMesh)
     public Material[] variantMaterials; // M7d: per-variant EnemyRender instances (editor-created; Udon cannot instantiate Materials)
+    public Mesh fxQuadMesh;           // M7e: unit quad for the GPU attack FX
+    public Material[] fxMaterials;    // M7e: [0] attack telegraph, [1] hit spark (editor-created)
     public Transform[] spawnPoints;   // up to 16
     public HordeNet hordeNet;         // downed players (playerHp <= 0) are excluded from targeting
 
@@ -76,6 +78,11 @@ public partial class HordeSim : UdonSharpBehaviour
     private Color[][] _slotListColors;
     private int[] _variantCounts;
     private Material[] _variantMats;
+    // M7e: FX draw (one slot list covering ALL alive slots, any variant)
+    private Texture2D _allSlotListTex;
+    private Color[] _allSlotListColors;
+    private int _allSlotCount;
+    private bool _fxReady;
     private int _kSimPos = -1;
     private int _kSimState = -1;
     private int _kSimMeta = -1;
@@ -296,6 +303,34 @@ public partial class HordeSim : UdonSharpBehaviour
             _dummyByVariant[v] = arr;
         }
 
+        // M7e: FX draw — one slot list with every alive slot; FX materials are
+        // editor-created (Udon cannot instantiate Materials).
+        _allSlotListTex = new Texture2D(slotCount, 1, TextureFormat.RGBAFloat, false);
+        _allSlotListTex.filterMode = FilterMode.Point;
+        _allSlotListColors = new Color[slotCount];
+        for (int i = 0; i < slotCount; i++) _allSlotListColors[i] = new Color(0f, 0f, 0f, 0f);
+        _allSlotListTex.SetPixels(_allSlotListColors);
+        _allSlotListTex.Apply(false);
+        _fxReady = fxQuadMesh != null && fxMaterials != null && fxMaterials.Length >= 2
+            && fxMaterials[0] != null && fxMaterials[1] != null;
+        if (_fxReady)
+        {
+            for (int f = 0; f < 2; f++)
+            {
+                Material m = fxMaterials[f];
+                m.SetFloat("_UseSlotList", 1f);
+                m.SetTexture("_SlotList", _allSlotListTex);
+                m.SetInt("_SlotW", slotW);
+                m.SetInt("_SlotCount", slotCount);
+                m.SetFloat("_AttackDuration", attackDuration);
+                m.SetFloat("_FxMode", f);
+            }
+        }
+        else
+        {
+            Debug.LogWarning("[HordeSim] fxQuadMesh / fxMaterials not wired — attack FX disabled");
+        }
+
         _posMirrorBuf = new Color[slotCount];
         _stateMirrorBuf = new Color[slotCount];
         _metaMirrorBuf = new Color[slotCount];
@@ -411,6 +446,22 @@ public partial class HordeSim : UdonSharpBehaviour
             enemyMaterial.SetTexture("_MetaTex", metaCur);
             enemyMaterial.SetFloat("_Extrapolate", extrap);
             VRCGraphics.DrawMeshInstanced(enemyMesh, 0, enemyMaterial, _dummyMatrices, slotCount);
+        }
+
+        // M7e: GPU attack FX — attack telegraph + hit spark, one instanced quad
+        // batch each; the shader collapses instances with nothing to show.
+        if (_fxReady)
+        {
+            for (int f = 0; f < 2; f++)
+            {
+                Material m = fxMaterials[f];
+                m.SetTexture("_PosTex", posCur);
+                m.SetTexture("_StateTex", stateCur);
+                m.SetTexture("_MetaTex", metaCur);
+                m.SetFloat("_Extrapolate", extrap);
+                m.SetFloat("_FxMode", f);
+                VRCGraphics.DrawMeshInstanced(fxQuadMesh, 0, m, _dummyMatrices, slotCount);
+            }
         }
 
         // 2) Advance the simulation: In = current, Out = the other set.

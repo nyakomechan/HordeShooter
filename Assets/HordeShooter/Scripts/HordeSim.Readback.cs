@@ -110,6 +110,8 @@ public partial class HordeSim
             Color[] cols = _slotListColors[v];
             for (int i = 0; i < slotCount; i++) cols[i] = new Color(0f, 0f, 0f, 0f);
         }
+        for (int i = 0; i < slotCount; i++) _allSlotListColors[i] = new Color(0f, 0f, 0f, 0f);
+        _allSlotCount = 0;
         for (int i = 0; i < slotCount; i++)
         {
             int s = (int)mirrorState[i];
@@ -120,11 +122,19 @@ public partial class HordeSim
             if (n >= slotCount) continue;
             _slotListColors[v][n] = new Color((float)i, 0f, 0f, 1f);
             _variantCounts[v] = n + 1;
+            // FX list: every alive slot regardless of variant
+            if (_allSlotCount < slotCount)
+            {
+                _allSlotListColors[_allSlotCount] = new Color((float)i, 0f, 0f, 1f);
+                _allSlotCount++;
+            }
         }
         for (int v = 0; v < 8; v++)
         {
             _slotListTex[v].SetPixels(_slotListColors[v]);
             _slotListTex[v].Apply(false);
         }
+        _allSlotListTex.SetPixels(_allSlotListColors);
+        _allSlotListTex.Apply(false);
     }
 }
