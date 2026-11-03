@@ -39,14 +39,22 @@ M0-M5 のホードシューターにローグライト形式（ヴァンパイ�
 - ロードアウト同期: `[UdonSynced] int gunLoadout`（3bit×5スロット）で他クライアントの
   銃身ビジュアル（BarrelSlot1..4 子オブジェクト）を切替
 
-### M7c — ショップ（commit fe93490）
+### M7c — ショップ（commit fe93490 / UI Canvas 版は後続コミット）
 
 - `ShopController`（新規）: gamePhase==2 で各プレイヤーをショップ空間へワープ、
   自分の銃のビルド状態から 3 枚のカードをローカル生成（Fisher-Yates）、
-  台座 Interact で適用＋READY 報告（`_ReportShopReady` → `shopReadyBits`）
+  カード選択で適用＋READY 報告（`_ReportShopReady` → `shopReadyBits`）
+- **UI は uGUI Canvas（ユーザー指定）**: ワールドスペース Canvas（12m×4m）に
+  クリック可能なカードパネル 3 枚（Image + Button + Text）。
+  `VRC_UiShape`（SDK3: `VRC.SDK3.Components.VRCUiShape`）+ GraphicRaycaster +
+  EventSystem でポインタ操作。Button.onClick →
+  `ShopCardPick._Pick`（`UnityEventTools.AddStringPersistentListener` でバインド、
+  カスタムメソッドは名前が保持される）。台座 Interact もフォールバックとして残す
+- Canvas の正面は -Z 側（ワープイン側は +Z）なので Canvas を Y+180° 反転。
+  TextMesh 看板も同様に反転
 - ワープ: `TeleportTo(pos + up*1.4)` — 実機は視点基準オフセット +1.401m のため補償
   （`teleportEyeCompensation`、実機検証で調整）。復帰は突入前の位置をローカル保存
-- ショップ空間: アリーナ外 (0,0,-48) に床＋3台座＋uGUI Text ラベル＋SHOP 看板
+- ショップ空間: アリーナ外 (0,0,-48) に床＋3台座＋カードパネル Canvas＋SHOP 看板
   （`HordeShooter/Setup Shop Space` メニュー、再実行で安全に再構築）
 - ラベルは uGUI Text（TextMesh.text は Udon 非対応のため）
 

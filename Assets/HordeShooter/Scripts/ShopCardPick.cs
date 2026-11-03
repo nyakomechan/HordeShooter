@@ -4,8 +4,10 @@ using VRC.SDKBase;
 using VRC.Udon.Common.Interfaces;
 
 /// <summary>
-/// One interactable card pedestal in the shop. Interact forwards the card index
-/// to the ShopController (which owns the per-player card state).
+/// One shop card slot: an interactable pedestal AND a uGUI Button target.
+/// Interact() handles the physical pedestal; _Pick() is the entry point bound
+/// to the card panel's uGUI Button (Button.onClick -> SendCustomEvent("_Pick")).
+/// Both forward the card index to the ShopController.
 /// </summary>
 public class ShopCardPick : UdonSharpBehaviour
 {
@@ -13,6 +15,12 @@ public class ShopCardPick : UdonSharpBehaviour
     public int cardIndex;
 
     public override void Interact()
+    {
+        if (shop != null) shop._PickCard(cardIndex);
+    }
+
+    /// <summary>uGUI Button entry point (parameterless, exact name preserved).</summary>
+    public void _Pick()
     {
         if (shop != null) shop._PickCard(cardIndex);
     }
