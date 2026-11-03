@@ -23,10 +23,10 @@ public class GunController : UdonSharpBehaviour
     public int maxBarrels = 5;
 
     // ---- card ids (shared with ShopController) ----
-    public const int CARD_GATLING = 0;
-    public const int CARD_SHOTGUN = 1;
-    public const int CARD_DRILL = 2;
-    public const int CARD_RAILGUN = 3;
+    // barrel cards: CARD_BARREL_BASE + type*10 + level  (111..145, level 1..5)
+    // buying a card whose type AND level match an EQUIPPED barrel does not add
+    // a barrel — it levels that barrel up instead (level cap 5).
+    public const int CARD_BARREL_BASE = 100;
     public const int CARD_DAMAGE = 10;
     public const int CARD_RATE = 11;
     public const int CARD_SPREAD = 12;
@@ -113,7 +113,7 @@ public class GunController : UdonSharpBehaviour
     {
         _InitTypeTables();
         _rayDamage = new float[HordeSim.MAX_RAYS];
-        _AddBarrel(0);   // every gun starts with the basic barrel
+        _AddBarrel(0, 1);   // every gun starts with the basic barrel at Lv1
         _PackLoadout();
         _UpdateLoadoutVisual();
         if (hordeSim != null) hordeSim.SetHitListener(this);
@@ -242,21 +242,32 @@ public class GunController : UdonSharpBehaviour
 
     // ================= shop cards =================
 
-    /// <summary>Candidate card ids for the shop (unowned barrels + stat ups).</summary>
+    /// <summary>
+    /// Candidate card ids for the shop: barrel cards at every type × level +
+    /// stat ups + barrel level up. Offers that would be no-ops are excluded:
+    /// a (type, Lv5) card when an identical Lv5 barrel is equipped (level cap),
+    /// and any additive barrel card when the slots are full.
+    /// </summary>
     public int[] GetCardOptions()
     {
-        int[] cand = new int[16];
+        int[] cand = new int[32];
         int n = 0;
-        if (_barrelCount < maxBarrels)
+        bool slotsFree = _barrelCount < maxBarrels;
+        for (int t = 1; t <= 4; t++)
         {
-            for (int t = 1; t <= 4; t++)
+            for (int lv = 1; lv <= 5; lv++)
             {
-                bool owned = false;
+                bool ownedType = false;
+                bool ownedSame = false;
                 for (int b = 0; b < _barrelCount; b++)
                 {
-                    if (_barrelType[b] == t) { owned = true; break; }
+                    if (_barrelType[b] != t) continue;
+                    ownedType = true;
+                    if (_barrelLevel[b] == lv) ownedSame = true;
                 }
-                if (!owned) { cand[n] = t - 1; n++; }   // card id = type - 1
+                if (ownedSame && lv >= 5) continue;                    // Lv5 cap: buying a Lv5 card of an Lv5 barrel is a no-op
+                if (ownedType && !slotsFree && !ownedSame) continue;   // slots full: only same-type+level (level up) is valid
+                cand[n] = CARD_BARREL_BASE + t * 10 + lv; n++;
             }
         }
         cand[n] = CARD_DAMAGE; n++;
@@ -273,9 +284,10 @@ public class GunController : UdonSharpBehaviour
     /// <summary>Applies a shop card (called locally by the ShopController).</summary>
     public void ApplyCard(int cardId)
     {
-        if (cardId >= CARD_GATLING && cardId <= CARD_RAILGUN)
+        if (cardId >= CARD_BARREL_BASE + 11 && cardId <= CARD_BARREL_BASE + 45)
         {
-            _AddBarrel(cardId + 1);
+            int v = cardId - CARD_BARREL_BASE;
+            _ApplyBarrelCard(v / 10, v % 10);
         }
         else if (cardId == CARD_DAMAGE) _dmgMul *= 1.25f;
         else if (cardId == CARD_RATE) _rateMul *= 1.2f;
@@ -288,12 +300,37 @@ public class GunController : UdonSharpBehaviour
         UpdateGunUI();
     }
 
-    private void _AddBarrel(int type)
+    /// <summary>
+    /// Barrel card: buying (type, level) ADDS a barrel at that level, unless the
+    /// player already equipped the same type at the same level — then the
+    /// equipped barrel levels up instead (level cap 5).
+    /// </summary>
+    private void _ApplyBarrelCard(int type, int level)
+    {
+        if (type < 1 || type > 4) return;
+        if (level < 1 || level > 5) return;
+        for (int b = 0; b < _barrelCount; b++)
+        {
+            if (_barrelType[b] != type) continue;
+            if (_barrelLevel[b] != level) continue;
+            if (level >= 5) return;   // already at the cap
+            _barrelLevel[b] = level + 1;
+            _PackLoadout();
+            _UpdateLoadoutVisual();
+            UpdateGunUI();
+            return;
+        }
+        _AddBarrel(type, level);
+    }
+
+    private void _AddBarrel(int type, int level)
     {
         if (_barrelCount >= maxBarrels) return;
+        if (level < 1) level = 1;
+        if (level > 5) level = 5;
         int b = _barrelCount;
         _barrelType[b] = type;
-        _barrelLevel[b] = 1;
+        _barrelLevel[b] = level;
         _barrelAmmo[b] = _MagFor(b);
         _barrelNextFire[b] = 0f;
         _barrelReloadUntil[b] = 0f;
