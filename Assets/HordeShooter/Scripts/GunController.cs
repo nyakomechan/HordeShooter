@@ -32,7 +32,13 @@ public class GunController : UdonSharpBehaviour
     public const int CARD_SPREAD = 12;
     public const int CARD_MAG = 13;
     public const int CARD_RELOAD = 14;
-    public const int CARD_BARREL_UP = 20;
+    // dedicated per-barrel-level-up cards: one card per barrel TYPE, only
+    // offered to owners of that type (not offered at Lv5 — the level cap).
+    public const int CARD_UP_BASIC = 21;
+    public const int CARD_UP_GATLING = 22;
+    public const int CARD_UP_SHOTGUN = 23;
+    public const int CARD_UP_DRILL = 24;
+    public const int CARD_UP_RAILGUN = 25;
 
     [Header("Audio")]
     public AudioSource audioSrc;
@@ -242,7 +248,11 @@ public class GunController : UdonSharpBehaviour
 
     // ================= shop cards =================
 
-    /// <summary>Candidate card ids for the shop (unowned barrels + stat ups).</summary>
+    /// <summary>
+    /// Candidate card ids for the shop: unowned barrel adds + stat ups +
+    /// one dedicated level-up card per OWNED barrel type. A type whose barrel is
+    /// already Lv5 (the cap) gets no level-up card — every offer is actionable.
+    /// </summary>
     public int[] GetCardOptions()
     {
         int[] cand = new int[16];
@@ -264,7 +274,20 @@ public class GunController : UdonSharpBehaviour
         cand[n] = CARD_SPREAD; n++;
         cand[n] = CARD_MAG; n++;
         cand[n] = CARD_RELOAD; n++;
-        if (_barrelCount > 0) { cand[n] = CARD_BARREL_UP; n++; }
+        // dedicated level-up cards: one per owned, non-maxed barrel type
+        for (int t = 0; t <= 4; t++)
+        {
+            bool owned = false;
+            bool maxed = false;
+            for (int b = 0; b < _barrelCount; b++)
+            {
+                if (_barrelType[b] != t) continue;
+                owned = true;
+                if (_barrelLevel[b] >= 5) maxed = true;
+            }
+            if (!owned || maxed) continue;
+            cand[n] = CARD_UP_BASIC + t; n++;
+        }
         int[] opts = new int[n];
         for (int i = 0; i < n; i++) opts[i] = cand[i];
         return opts;
@@ -282,10 +305,25 @@ public class GunController : UdonSharpBehaviour
         else if (cardId == CARD_SPREAD) _spreadMul *= 0.7f;
         else if (cardId == CARD_MAG) _magMul *= 1.5f;
         else if (cardId == CARD_RELOAD) _reloadMul *= 0.7f;
-        else if (cardId == CARD_BARREL_UP) _UpgradeRandomBarrel();
+        else if (cardId >= CARD_UP_BASIC && cardId <= CARD_UP_RAILGUN)
+        {
+            _UpgradeBarrelType(cardId - CARD_UP_BASIC);
+        }
         _PackLoadout();
         _UpdateLoadoutVisual();
         UpdateGunUI();
+    }
+
+    /// <summary>Dedicated level-up: +1 level to the (first) barrel of that type, capped at Lv5.</summary>
+    private void _UpgradeBarrelType(int type)
+    {
+        for (int b = 0; b < _barrelCount; b++)
+        {
+            if (_barrelType[b] != type) continue;
+            if (_barrelLevel[b] >= 5) return;   // cap (offers already exclude this)
+            _barrelLevel[b]++;
+            return;
+        }
     }
 
     private void _AddBarrel(int type)
@@ -298,13 +336,6 @@ public class GunController : UdonSharpBehaviour
         _barrelNextFire[b] = 0f;
         _barrelReloadUntil[b] = 0f;
         _barrelCount++;
-    }
-
-    private void _UpgradeRandomBarrel()
-    {
-        if (_barrelCount <= 0) return;
-        int b = Random.Range(0, _barrelCount);
-        if (_barrelLevel[b] < 5) _barrelLevel[b]++;
     }
 
     // ================= loadout sync / visuals =================

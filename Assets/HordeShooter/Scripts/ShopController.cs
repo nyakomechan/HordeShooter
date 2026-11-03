@@ -176,7 +176,11 @@ public class ShopController : UdonSharpBehaviour
         if (id == GunController.CARD_SPREAD) return "ACCURACY UP";
         if (id == GunController.CARD_MAG) return "MAG SIZE UP";
         if (id == GunController.CARD_RELOAD) return "RELOAD UP";
-        if (id == GunController.CARD_BARREL_UP) return "BARREL LEVEL UP";
+        if (id == GunController.CARD_UP_BASIC) return "BASIC LEVEL UP";
+        if (id == GunController.CARD_UP_GATLING) return "GATLING LEVEL UP";
+        if (id == GunController.CARD_UP_SHOTGUN) return "SHOTGUN LEVEL UP";
+        if (id == GunController.CARD_UP_DRILL) return "DRILL LEVEL UP";
+        if (id == GunController.CARD_UP_RAILGUN) return "RAILGUN LEVEL UP";
         return "?";
     }
 
@@ -191,7 +195,10 @@ public class ShopController : UdonSharpBehaviour
         if (id == GunController.CARD_SPREAD) return "spread -30%";
         if (id == GunController.CARD_MAG) return "magazine +50%";
         if (id == GunController.CARD_RELOAD) return "reload time -30%";
-        if (id == GunController.CARD_BARREL_UP) return "random owned barrel +1 level";
+        if (id >= GunController.CARD_UP_BASIC && id <= GunController.CARD_UP_RAILGUN)
+        {
+            return "that barrel +1 level (max Lv5)";
+        }
         return "";
     }
 
