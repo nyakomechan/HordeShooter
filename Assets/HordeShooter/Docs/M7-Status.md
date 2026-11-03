@@ -93,6 +93,36 @@ M0-M5 のホードシューターにローグライト形式（ヴァンパイ�
 - 注意: `playerDamagePerTick` 等のデバッグ用 SetProgramVariable はローカル変更であり
   同期されない（owner が変わると新 owner のシリアライズ値が使われる）
 
+### ロビーフロー統合（2026-11-03 追加、commit 72595c1）
+
+- **ショップ部屋 = ロビー**: フィールドの WaveStart / GameRestart キューブは削除
+  （HordeHudSetup も生成しない。ゲーム開始はショップ部屋の GAME START パネル、
+  再スタートはゲームオーバー自動リセットのみ）
+- phase 0（ロビー）に遷移すると全プレイヤーがショップ部屋へ自動ワープ
+  （途中参加者も `_lastPhase=-1` 初回 Update でワープ）
+- GAME START（phase 0→1）でショップ部屋にいるプレイヤーは `Respawn()` で
+  アリーナのスポーン地点へ復帰（銃は PlayerObject の自己レスポーンが追従）
+- HUD の復活時 Respawn（phase 0）は削除（位置は ShopController が管理）
+- HUD ロビーテキスト: 「LOBBY - SHOP で GAME START」
+- **MultiSim 検証済みフルループ**: ロビー（自動ワープ (0,0,-44.5)）→ GAME START クリック
+  → アリーナ復帰 (0,0,0) + wave 1 開始（40 体湧き）→ HP ゼロでゲームオーバー →
+  10 秒自動リセット → ロビーへ自動ワープ復帰
+
+### トラブルシュート記録: VRCWorld（シーンディスクリプタ）消失
+
+- ClientSim が「Cannot start ClientSim if there is no scene descriptor!」で初期化を
+  中断し、`Networking.LocalPlayer` が null になる（全 Udon が NRE で halt）事象が発生
+- 原因: シーンから VRCWorld プリファブインスタンスが消失していた
+  （クローンエディタとのシーン保存競合 + 孤児 UdonBehaviour クリーンアップの
+  誤判定リスクが重複した可能性。消失経路は特定できず）
+- 修正: シーンをディスクから再読込（`EditorSceneManager.OpenScene`）したところ
+  プリファブインスタンスが復活（エディタのメモリ上のシーンが壊れていた状態だった）
+- 教訓: ①「LocalPlayer null + 全 Udon halt」はシーンディスクリプタ消失を疑う
+  ②孤児 UdonBehaviour クリーンアップは SDK 内部 Udon（VRCWorld 等、UdonSharp
+  プロキシを持たない正当な Udon）を誤削除する危険があるため
+  `programSource == null` のものだけを対象にする
+  ③クローンエディタ起動中のシーン保存は競合に注意
+
 ### M7d — 敵バリエーション 8 種（commit 435a8ab）
 
 - variant テーブル（EnemySim.compeito / EnemyAnim.cginc / HordeNet.Wave.cs の3箇所で同期）:
