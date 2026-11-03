@@ -38,6 +38,18 @@ public static class ModularArenaBuilder
     [MenuItem("HordeShooter/Rebuild Modular Arena (Kenney Kit)")]
     public static void Build()
     {
+        // guard: this rebuilds the whole arena stage and destroys manual edits
+        if (!EditorUtility.DisplayDialog(
+            "Rebuild Modular Arena",
+            "The whole Stage (deck, perimeter, rooms, corridors) will be rebuilt and the scene saved.\n" +
+            "Manual edits to the arena will be LOST.\n\n" +
+            "Rebuild anyway?",
+            "Rebuild", "Cancel"))
+        {
+            Debug.Log("[ModularArenaBuilder] rebuild cancelled by user");
+            return;
+        }
+
         Scene scene = SceneManager.GetActiveScene();
         if (string.IsNullOrEmpty(scene.path))
         {

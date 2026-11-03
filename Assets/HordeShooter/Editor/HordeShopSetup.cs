@@ -18,6 +18,18 @@ public static class HordeShopSetup
     [MenuItem("HordeShooter/Setup Shop Space")]
     public static void Setup()
     {
+        // guard: this rebuilds ShopSpace and destroys manual edits
+        if (!EditorUtility.DisplayDialog(
+            "Setup Shop Space",
+            "ShopSpace / ShopController will be rebuilt from scratch and the scene saved.\n" +
+            "Manual edits inside the shop room will be LOST.\n\n" +
+            "Rebuild anyway?",
+            "Rebuild", "Cancel"))
+        {
+            Debug.Log("[HordeShopSetup] rebuild cancelled by user");
+            return;
+        }
+
         var net = Object.FindObjectOfType<HordeNet>();
         var gunTemplate = GameObject.Find("Gun");
         if (net == null || gunTemplate == null)
