@@ -21,6 +21,118 @@ public static class EnemyMeshBuilder
         Debug.Log("[EnemyMeshBuilder] enemy mesh created: " + MeshPath);
     }
 
+    // ---- M7d: per-variant meshes (Minecraft-like low-poly box assemblies) ----
+
+    public const string VariantDir = "Assets/HordeShooter/Art";
+    public static readonly string[] VariantNames =
+    {
+        "Walker", "Runner", "Boss", "Brute", "Stalker", "Swarm", "Bomber", "Elite"
+    };
+
+    [MenuItem("HordeShooter/Build Variant Enemy Meshes")]
+    public static void BuildVariantMeshes()
+    {
+        EnsureFolders();
+        for (int v = 0; v < 8; v++)
+        {
+            Mesh mesh = BuildVariantMesh(v);
+            string path = VariantDir + "/EnemyV" + v + ".asset";
+            AssetDatabase.CreateAsset(mesh, path);
+            Debug.Log("[EnemyMeshBuilder] variant mesh " + v + " (" + VariantNames[v] + "): " + path
+                + " verts=" + mesh.vertexCount + " tris=" + mesh.triangles.Length / 3);
+        }
+        AssetDatabase.SaveAssets();
+    }
+
+    /// <summary>Builds the variant mesh for id 0..7 (0 = the original walker).</summary>
+    public static Mesh BuildVariantMesh(int v)
+    {
+        if (v == 0) return BuildMesh();
+
+        var verts = new List<Vector3>();
+        var norms = new List<Vector3>();
+        var cols = new List<Color>();
+        var tris = new List<int>();
+
+        Color none = new Color(0f, 0f, 0f, 0f);
+        Color arm = new Color(1f, 0f, 0f, 0f);
+        Color head = new Color(0f, 1f, 0f, 0f);
+
+        switch (v)
+        {
+            case 1: // runner: lean sprinter, arms swept back, small head
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 0.95f, 0f), new Vector3(0.18f, 0.35f, 0.11f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 1.42f, -0.02f), new Vector3(0.11f, 0.12f, 0.11f), head);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.24f, 1.15f, -0.18f), new Vector3(0.055f, 0.055f, 0.22f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(0.24f, 1.15f, -0.18f), new Vector3(0.055f, 0.055f, 0.22f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.09f, 0.25f, 0f), new Vector3(0.06f, 0.25f, 0.07f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0.09f, 0.25f, 0f), new Vector3(0.06f, 0.25f, 0.07f), none);
+                break;
+            case 2: // boss: broad shoulders, horns, huge arms
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 1.0f, 0f), new Vector3(0.32f, 0.45f, 0.18f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 1.55f, 0.04f), new Vector3(0.16f, 0.16f, 0.16f), head);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.1f, 1.72f, 0.0f), new Vector3(0.03f, 0.1f, 0.03f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0.1f, 1.72f, 0.0f), new Vector3(0.03f, 0.1f, 0.03f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.42f, 1.2f, 0.3f), new Vector3(0.1f, 0.1f, 0.32f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(0.42f, 1.2f, 0.3f), new Vector3(0.1f, 0.1f, 0.32f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.16f, 0.28f, 0f), new Vector3(0.1f, 0.28f, 0.11f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0.16f, 0.28f, 0f), new Vector3(0.1f, 0.28f, 0.11f), none);
+                break;
+            case 3: // brute: bulky torso, massive arms, short legs
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 0.95f, 0f), new Vector3(0.34f, 0.42f, 0.2f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 1.42f, 0.03f), new Vector3(0.14f, 0.13f, 0.14f), head);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.44f, 1.05f, 0.18f), new Vector3(0.12f, 0.12f, 0.3f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(0.44f, 1.05f, 0.18f), new Vector3(0.12f, 0.12f, 0.3f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.14f, 0.22f, 0f), new Vector3(0.1f, 0.22f, 0.11f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0.14f, 0.22f, 0f), new Vector3(0.1f, 0.22f, 0.11f), none);
+                break;
+            case 4: // stalker: tall thin, long arms, small head
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 1.05f, 0f), new Vector3(0.14f, 0.45f, 0.1f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 1.55f, 0.02f), new Vector3(0.09f, 0.1f, 0.09f), head);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.22f, 1.2f, 0.35f), new Vector3(0.045f, 0.045f, 0.3f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(0.22f, 1.2f, 0.35f), new Vector3(0.045f, 0.045f, 0.3f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.07f, 0.28f, 0f), new Vector3(0.05f, 0.28f, 0.06f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0.07f, 0.28f, 0f), new Vector3(0.05f, 0.28f, 0.06f), none);
+                break;
+            case 5: // swarm: tiny blob body, stubby legs
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 0.55f, 0f), new Vector3(0.16f, 0.2f, 0.12f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 0.82f, 0.02f), new Vector3(0.1f, 0.1f, 0.1f), head);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.19f, 0.6f, 0.12f), new Vector3(0.04f, 0.04f, 0.12f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(0.19f, 0.6f, 0.12f), new Vector3(0.04f, 0.04f, 0.12f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.06f, 0.12f, 0f), new Vector3(0.05f, 0.12f, 0.06f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0.06f, 0.12f, 0f), new Vector3(0.05f, 0.12f, 0.06f), none);
+                break;
+            case 6: // bomber: wide round body, stubby arms
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 0.8f, 0f), new Vector3(0.26f, 0.3f, 0.22f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 1.22f, 0.03f), new Vector3(0.12f, 0.12f, 0.12f), head);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.32f, 0.85f, 0.1f), new Vector3(0.07f, 0.07f, 0.14f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(0.32f, 0.85f, 0.1f), new Vector3(0.07f, 0.07f, 0.14f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.11f, 0.16f, 0f), new Vector3(0.08f, 0.16f, 0.09f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0.11f, 0.16f, 0f), new Vector3(0.08f, 0.16f, 0.09f), none);
+                break;
+            case 7: // elite: armored — shoulder pads + chest plate
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 0.95f, 0f), new Vector3(0.24f, 0.4f, 0.14f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 1.1f, 0.08f), new Vector3(0.2f, 0.14f, 0.05f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.3f, 1.28f, 0f), new Vector3(0.09f, 0.07f, 0.12f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0.3f, 1.28f, 0f), new Vector3(0.09f, 0.07f, 0.12f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0f, 1.48f, 0.03f), new Vector3(0.12f, 0.13f, 0.12f), head);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.31f, 1.1f, 0.25f), new Vector3(0.07f, 0.07f, 0.24f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(0.31f, 1.1f, 0.25f), new Vector3(0.07f, 0.07f, 0.24f), arm);
+                AddBox(verts, norms, cols, tris, new Vector3(-0.11f, 0.26f, 0f), new Vector3(0.08f, 0.26f, 0.09f), none);
+                AddBox(verts, norms, cols, tris, new Vector3(0.11f, 0.26f, 0f), new Vector3(0.08f, 0.26f, 0.09f), none);
+                break;
+        }
+
+        Mesh mesh = new Mesh();
+        mesh.name = "EnemyV" + v + "_" + VariantNames[v];
+        mesh.vertices = verts.ToArray();
+        mesh.normals = norms.ToArray();
+        mesh.colors = cols.ToArray();
+        mesh.triangles = tris.ToArray();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
     public static Mesh BuildMesh()
     {
         var verts = new List<Vector3>();

@@ -427,9 +427,10 @@ public partial class HordeNet : UdonSharpBehaviour
             int qz = snap[i * 3] & 0xFFFF;
             int qy = snap[i * 3 + 1] & 0xFFFF;
             int st8 = (snap[i * 3 + 2] >> 8) & 0xFF;
+            int var8 = snap[i * 3 + 2] & 0xFF;
             if (st8 >= 1 && st8 <= 4)
             {
-                _EnqueueCorrection(i, qx, qy, qz, st8);
+                _EnqueueCorrection(i, qx, qy, qz, st8, var8);
                 woke++;
             }
         }

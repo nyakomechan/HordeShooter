@@ -49,6 +49,7 @@ public partial class HordeNet
     private float _damageTimer;
     private float _gameOverAt = -1f;
     private bool[] _playerHitTick = new bool[16];
+    private int[] _playerDamage = new int[16];
     private int[] _playerIds = new int[16];
 
     /// <summary>Interact entry: start wave 1 from the lobby (owner only).</summary>
@@ -102,10 +103,35 @@ public partial class HordeNet
         return t;
     }
 
-    /// <summary>Variant picker hook — M7d replaces this with per-wave weight tables.</summary>
+    // ---- per-variant player-damage tables (mirror of EnemySim.compeito) ----
+    // base player damage 10, base range playerAttackRange
+    private float[] _variantDamage = new float[] { 10f, 6f, 25f, 20f, 8f, 4f, 35f, 15f };
+    private float[] _variantRangeMul = new float[] { 1.0f, 0.85f, 1.6f, 1.3f, 0.8f, 0.7f, 1.4f, 1.1f };
+
+    /// <summary>
+    /// Variant picker: per-wave unlock weights (percent; walker fills the rest).
+    /// M7d — runners from wave 2, stalkers 4, swarm 5, brutes 6, bombers 8, elite 10.
+    /// </summary>
     private int _PickVariant()
     {
-        if (waveNumber >= 2 && (_waveNextSlot % 5) == 4) return 1;   // runners from wave 2
+        int runner = waveNumber >= 2 ? 20 : 0;
+        int stalker = waveNumber >= 4 ? 12 : 0;
+        int swarm = waveNumber >= 5 ? 18 : 0;
+        int brute = waveNumber >= 6 ? 10 : 0;
+        int bomber = waveNumber >= 8 ? 8 : 0;
+        int elite = waveNumber >= 10 ? 8 : 0;
+        int roll = Random.Range(0, 100);
+        if (roll < runner) return 1;
+        roll -= runner;
+        if (roll < stalker) return 4;
+        roll -= stalker;
+        if (roll < swarm) return 5;
+        roll -= swarm;
+        if (roll < brute) return 3;
+        roll -= brute;
+        if (roll < bomber) return 6;
+        roll -= bomber;
+        if (roll < elite) return 7;
         return 0;
     }
 
@@ -279,7 +305,8 @@ public partial class HordeNet
 
     /// <summary>
     /// ATTACK-state enemies within range chip the HP of the player they press.
-    /// At most one hit per player per tick (a swarm deals 20 dmg/s, not 20×N).
+    /// At most one hit per player per tick; damage and reach come from the
+    /// enemy's variant (M7d tables mirroring the GPU sim).
     /// </summary>
     private void _DamagePlayersTick()
     {
@@ -288,12 +315,16 @@ public partial class HordeNet
         float[] ms = hordeSim != null ? hordeSim.mirrorState : null;
         float[] mx = hordeSim != null ? hordeSim.mirrorPosX : null;
         float[] mz = hordeSim != null ? hordeSim.mirrorPosZ : null;
+        float[] mv = hordeSim != null ? hordeSim.mirrorVariant : null;
         if (ms == null || mx == null || mz == null) return;
         for (int p = 0; p < 16; p++) _playerHitTick[p] = false;
-        float r2 = playerAttackRange * playerAttackRange;
         for (int i = 0; i < ms.Length; i++)
         {
             if ((int)ms[i] != 3) continue;   // STATE_ATTACK
+            int v = mv != null ? (int)mv[i] : 0;
+            if (v < 0 || v > 7) v = 0;
+            float range = playerAttackRange * _variantRangeMul[v];
+            float r2 = range * range;
             for (int p = 0; p < _playerCount; p++)
             {
                 if (_playerHitTick[p]) continue;
@@ -302,6 +333,7 @@ public partial class HordeNet
                 if (dx * dx + dz * dz < r2)
                 {
                     _playerHitTick[p] = true;
+                    _playerDamage[p] = (int)_variantDamage[v];
                     break;
                 }
             }
@@ -313,7 +345,7 @@ public partial class HordeNet
             if (idx < 0 || idx >= 16) continue;
             int hp = playerHp[idx];
             if (hp <= 0) continue;           // already down, waiting for the wave clear
-            hp -= playerDamagePerTick;
+            hp -= _playerDamage[p];
             playerHp[idx] = hp > 0 ? hp : 0;
         }
 

@@ -7,6 +7,7 @@ Shader "HordeShooter/EnemyRender"
         _PosTex ("Pos Tex", 2D) = "black" {}
         _StateTex ("State Tex", 2D) = "black" {}
         _MetaTex ("Meta Tex", 2D) = "black" {}
+        _SlotList ("Slot List", 2D) = "black" {}
     }
     SubShader
     {

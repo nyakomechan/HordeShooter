@@ -1,17 +1,21 @@
 // Shared per-instance fetch + procedural animation for EnemyRender.shader.
-// Instance data lives in the HordeSim RenderTextures; unity_InstanceID selects the slot.
+// Instance data lives in the HordeSim RenderTextures; unity_InstanceID selects
+// the slot — either directly (legacy single-mesh draw) or through the per-variant
+// slot-list texture (_UseSlotList > 0.5, M7d variant-batched draws).
 // Included by both the color pass and the ShadowCaster pass (UnityCG.cginc must be
 // included before this file).
 
 Texture2D<float4> _PosTex;     // xyz world pos, w yaw
 Texture2D<float4> _StateTex;   // x hp, y state, z state timer, w hit flash remaining
 Texture2D<float4> _MetaTex;    // x speed, y variant, z target idx, w anim phase
+Texture2D<float4> _SlotList;   // 512x1: r = slot index for this instance (variant-batched draws)
 
 int _SlotW;
 int _SlotCount;
 float _Extrapolate;
 float _DebugUseMatrix;   // 1 = render at the instance (dummy) matrix, bypassing texture data
 float _DebugForceScale;  // 1 = force scale 1 (bypass state/LOD collapse)
+float _UseSlotList;      // 1 = unity_InstanceID indexes _SlotList instead of the slot directly
 float _MoveSpeed;
 float _AttackDuration;
 float _StaggerDuration;
@@ -24,8 +28,16 @@ float _DeathDuration;
 #define ES_ATTACK   3
 #define ES_STAGGER  4
 #define ES_DYING    5
-#define ES_VARIANT_RUNNER 1
-#define ES_VARIANT_BOSS   2
+
+// variant ids (mirror of EnemySim.compeito)
+#define ES_V_WALKER  0
+#define ES_V_RUNNER  1
+#define ES_V_BOSS    2
+#define ES_V_BRUTE   3
+#define ES_V_STALKER 4
+#define ES_V_SWARM   5
+#define ES_V_BOMBER  6
+#define ES_V_ELITE   7
 
 float EsHash(int n) { return frac(sin((float)n * 127.1) * 43758.5453); }
 
@@ -34,10 +46,40 @@ float EsHash(int n) { return frac(sin((float)n * 127.1) * 43758.5453); }
 int EsInstanceSlot()
 {
 #if defined(UNITY_INSTANCING_ENABLED) || defined(UNITY_PROCEDURAL_INSTANCING_ENABLED) || defined(UNITY_STEREO_INSTANCING_ENABLED)
+    if (_UseSlotList > 0.5)
+        return (int)_SlotList.Load(int3((int)unity_InstanceID, 0, 0)).r;
     return (int)unity_InstanceID;
 #else
     return 0;
 #endif
+}
+
+// Per-variant render scale (mirror of EnemySim.VariantScale).
+float EsVariantScale(int v)
+{
+    if (v == ES_V_BOSS) return 1.9;
+    if (v == ES_V_RUNNER) return 0.9;
+    if (v == ES_V_BRUTE) return 1.4;
+    if (v == ES_V_STALKER) return 0.8;
+    if (v == ES_V_SWARM) return 0.6;
+    if (v == ES_V_BOMBER) return 1.1;
+    if (v == ES_V_ELITE) return 1.2;
+    return 1.0;
+}
+
+// Per-variant base tint (Minecraft-ish low-poly palette).
+float3 EsVariantTint(int v, float hash)
+{
+    float3 c;
+    if (v == ES_V_RUNNER) c = float3(1.05, 1.05, 0.55);        // sickly yellow-green
+    else if (v == ES_V_BOSS) c = float3(1.3, 0.5, 0.45);       // red
+    else if (v == ES_V_BRUTE) c = float3(0.75, 0.4, 0.3);      // dark red-brown
+    else if (v == ES_V_STALKER) c = float3(0.75, 0.5, 1.1);    // purple
+    else if (v == ES_V_SWARM) c = float3(1.1, 1.1, 1.0);       // pale
+    else if (v == ES_V_BOMBER) c = float3(1.25, 0.75, 0.3);    // orange
+    else if (v == ES_V_ELITE) c = float3(0.5, 0.7, 1.25);      // blue
+    else c = float3(0.9, 0.95, 0.8);                           // walker: gray-green
+    return c * (0.85 + 0.3 * hash);
 }
 
 // Computes the animated world-space vertex position/normal for one instance.
@@ -94,8 +136,7 @@ void EsAnimate(float3 local, float3 normal, float armMask, float headMask, int s
     }
 
     // variant scale
-    if (variant == ES_VARIANT_BOSS) scale *= 1.9;
-    else if (variant == ES_VARIANT_RUNNER) scale *= 0.9;
+    scale *= EsVariantScale(variant);
 
     // distance LOD: shrink beyond 80m, collapse beyond 120m
     float camDist = distance(pos, _WorldSpaceCameraPos);
@@ -116,9 +157,7 @@ void EsAnimate(float3 local, float3 normal, float armMask, float headMask, int s
     worldPos = pos + r * scale;
     worldNormal = normalize(float3(normal.x * cyaw + normal.z * syaw, normal.y, -normal.x * syaw + normal.z * cyaw));
 
-    // per-instance tint variation; bosses read reddish
-    float h = EsHash(slot * 7 + 13);
-    tint = float3(0.85 + 0.3 * h, 0.85 + 0.3 * h, 0.85 + 0.3 * h);
-    if (variant == ES_VARIANT_BOSS) tint = float3(1.25, 0.65, 0.6);
+    // per-variant tint with a small per-instance hash variation
+    tint = EsVariantTint(variant, EsHash(slot * 7 + 13));
     flash = saturate(flashT * 6.0);
 }

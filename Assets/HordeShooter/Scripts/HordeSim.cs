@@ -23,6 +23,8 @@ public partial class HordeSim : UdonSharpBehaviour
     public Material simMaterial;      // generated from EnemySim.compeito
     public Material enemyMaterial;    // instance of HordeShooter/EnemyRender
     public Mesh enemyMesh;            // built by EnemyMeshBuilder
+    public Mesh[] variantMeshes;      // M7d: per-variant meshes (8; fallback = enemyMesh)
+    public Material[] variantMaterials; // M7d: per-variant EnemyRender instances (editor-created; Udon cannot instantiate Materials)
     public Transform[] spawnPoints;   // up to 16
     public HordeNet hordeNet;         // downed players (playerHp <= 0) are excluded from targeting
 
@@ -69,6 +71,11 @@ public partial class HordeSim : UdonSharpBehaviour
     private Texture2D _corrTex;
     private Texture2D _rayOriginTex;
     private Texture2D _rayDirTex;
+    // M7d: per-variant render batching (8 variants, slot-list textures + materials)
+    private Texture2D[] _slotListTex;
+    private Color[][] _slotListColors;
+    private int[] _variantCounts;
+    private Material[] _variantMats;
     private int _kSimPos = -1;
     private int _kSimState = -1;
     private int _kSimMeta = -1;
@@ -99,14 +106,21 @@ public partial class HordeSim : UdonSharpBehaviour
 
     // ---- render ----
     private Matrix4x4[] _dummyMatrices;
+    // M7d: per-variant dummy matrices. DrawMeshInstanced culls the whole batch by
+    // the bounds of the FIRST `count` instance matrices, and the shader ignores
+    // them for placement (texture-driven) — so each variant's array must scatter
+    // its first `count` entries across the whole arena or small batches get culled.
+    private Matrix4x4[][] _dummyByVariant;
     private float _lastSimTime;
 
     // ---- mirror (async readback, see HordeSim.Readback.cs) ----
     private Color[] _posMirrorBuf;
     private Color[] _stateMirrorBuf;
+    private Color[] _metaMirrorBuf;
     private Color[] _hitMirrorBuf;
     private bool _mirrorAwaitPos;
     private bool _mirrorAwaitState;
+    private bool _mirrorAwaitMeta;
     private bool _hitAwait;
     private float _mirrorTimer;
     private float _awaitStart;      // watchdog: readback callbacks can stall in the editor
@@ -119,6 +133,7 @@ public partial class HordeSim : UdonSharpBehaviour
     [System.NonSerialized] public float[] mirrorYaw;
     [System.NonSerialized] public float[] mirrorHp;
     [System.NonSerialized] public float[] mirrorState;
+    [System.NonSerialized] public float[] mirrorVariant;
 
     // ---- hitscan (rays queued by GunController, resolved on GPU) ----
     private Color[] _rayOriginColors;
@@ -267,14 +282,67 @@ public partial class HordeSim : UdonSharpBehaviour
             _dummyMatrices[i] = Matrix4x4.TRS(p, Quaternion.identity, Vector3.one);
         }
 
+        // M7d: per-variant scatter — entry i of variant v lands on spread index
+        // (i*61 + v*7) % 512 (61 is coprime with 512), so the first n entries of
+        // every variant cover the whole arena and the batch is never culled.
+        _dummyByVariant = new Matrix4x4[8][];
+        for (int v = 0; v < 8; v++)
+        {
+            Matrix4x4[] arr = new Matrix4x4[slotCount];
+            for (int i = 0; i < slotCount; i++)
+            {
+                arr[i] = _dummyMatrices[(i * 61 + v * 7) % slotCount];
+            }
+            _dummyByVariant[v] = arr;
+        }
+
         _posMirrorBuf = new Color[slotCount];
         _stateMirrorBuf = new Color[slotCount];
+        _metaMirrorBuf = new Color[slotCount];
         mirrorPosX = new float[slotCount];
         mirrorPosY = new float[slotCount];
         mirrorPosZ = new float[slotCount];
         mirrorYaw = new float[slotCount];
         mirrorHp = new float[slotCount];
         mirrorState = new float[slotCount];
+        mirrorVariant = new float[slotCount];
+
+        // M7d: per-variant render batching — one slot-list texture per variant;
+        // materials are editor-created (Udon cannot instantiate Materials).
+        _slotListTex = new Texture2D[8];
+        _slotListColors = new Color[8][];
+        _variantCounts = new int[8];
+        bool matsOk = variantMaterials != null && variantMaterials.Length >= 8;
+        if (!matsOk)
+            Debug.LogWarning("[HordeSim] variantMaterials not wired (8) — falling back to the legacy single-mesh draw");
+        _variantMats = new Material[8];
+        for (int v = 0; v < 8; v++)
+        {
+            Texture2D t = new Texture2D(slotCount, 1, TextureFormat.RGBAFloat, false);
+            t.filterMode = FilterMode.Point;
+            Color[] cols = new Color[slotCount];
+            for (int i = 0; i < slotCount; i++) cols[i] = new Color(0f, 0f, 0f, 0f);
+            t.SetPixels(cols);
+            t.Apply(false);
+            _slotListTex[v] = t;
+            _slotListColors[v] = cols;
+            if (matsOk && variantMaterials[v] != null)
+            {
+                Material m = variantMaterials[v];
+                m.SetFloat("_UseSlotList", 1f);
+                m.SetTexture("_SlotList", t);
+                // copy the sim constants the shader needs (fresh materials default to 0,
+                // which breaks the slot->texel math in EnemyAnim.cginc)
+                m.SetInt("_SlotW", slotW);
+                m.SetInt("_SlotCount", slotCount);
+                m.SetFloat("_MoveSpeed", moveSpeed);
+                m.SetFloat("_AttackDuration", attackDuration);
+                m.SetFloat("_StaggerDuration", staggerDuration);
+                m.SetFloat("_SpawnDuration", spawnDuration);
+                m.SetFloat("_DeathDuration", deathDuration);
+                _variantMats[v] = m;
+            }
+        }
 
         _cmdType = new int[CMD_CAP];
         _cmdSlot = new int[CMD_CAP];
@@ -318,11 +386,32 @@ public partial class HordeSim : UdonSharpBehaviour
         RenderTexture posCur = _readA ? _posA : _posB;
         RenderTexture stateCur = _readA ? _stateA : _stateB;
         RenderTexture metaCur = _readA ? _metaA : _metaB;
-        enemyMaterial.SetTexture("_PosTex", posCur);
-        enemyMaterial.SetTexture("_StateTex", stateCur);
-        enemyMaterial.SetTexture("_MetaTex", metaCur);
-        enemyMaterial.SetFloat("_Extrapolate", extrap);
-        VRCGraphics.DrawMeshInstanced(enemyMesh, 0, enemyMaterial, _dummyMatrices, slotCount);
+        // M7d: per-variant draws when variant materials are wired; otherwise the
+        // legacy single-mesh draw (every slot, walker mesh).
+        if (_variantMats[0] != null)
+        {
+            for (int v = 0; v < 8; v++)
+            {
+                int n = _variantCounts[v];
+                if (n <= 0) continue;
+                Material m = _variantMats[v];
+                m.SetTexture("_PosTex", posCur);
+                m.SetTexture("_StateTex", stateCur);
+                m.SetTexture("_MetaTex", metaCur);
+                m.SetFloat("_Extrapolate", extrap);
+                Mesh mesh = (variantMeshes != null && v < variantMeshes.Length && variantMeshes[v] != null)
+                    ? variantMeshes[v] : enemyMesh;
+                VRCGraphics.DrawMeshInstanced(mesh, 0, m, _dummyByVariant[v], n);
+            }
+        }
+        else
+        {
+            enemyMaterial.SetTexture("_PosTex", posCur);
+            enemyMaterial.SetTexture("_StateTex", stateCur);
+            enemyMaterial.SetTexture("_MetaTex", metaCur);
+            enemyMaterial.SetFloat("_Extrapolate", extrap);
+            VRCGraphics.DrawMeshInstanced(enemyMesh, 0, enemyMaterial, _dummyMatrices, slotCount);
+        }
 
         // 2) Advance the simulation: In = current, Out = the other set.
         UpdatePlayerTex();
@@ -357,16 +446,17 @@ public partial class HordeSim : UdonSharpBehaviour
 
         // 3) Mirror readback (chained pos -> state -> hit, see HordeSim.Readback.cs).
         // Watchdog: async readback callbacks can stall silently; re-arm after a timeout.
-        if ((_mirrorAwaitPos || _mirrorAwaitState || _hitAwait)
+        if ((_mirrorAwaitPos || _mirrorAwaitState || _mirrorAwaitMeta || _hitAwait)
             && Time.time - _awaitStart > AWAIT_TIMEOUT)
         {
             _mirrorAwaitPos = false;
             _mirrorAwaitState = false;
+            _mirrorAwaitMeta = false;
             _hitAwait = false;
             _mirrorTimer = mirrorInterval;
         }
         _mirrorTimer += dt;
-        if (_mirrorTimer >= mirrorInterval && !_mirrorAwaitPos && !_mirrorAwaitState && !_hitAwait)
+        if (_mirrorTimer >= mirrorInterval && !_mirrorAwaitPos && !_mirrorAwaitState && !_mirrorAwaitMeta && !_hitAwait)
         {
             _mirrorTimer = 0f;
             _mirrorAwaitPos = true;
@@ -559,12 +649,12 @@ public partial class HordeSim : UdonSharpBehaviour
 
     /// <summary>
     /// Late-joiner catch-up: activate an inactive slot at its corrected position.
-    /// cmd p0 = target state (1-4); position comes from the correction texture
-    /// (initial slot pos is far below the arena, so the correction snaps).
+    /// cmd p0 = target state (1-4), cmd p1 = variant (HP/speed come from the
+    /// variant table); position comes from the correction texture.
     /// </summary>
-    public void QueueWake(int slot, int state)
+    public void QueueWake(int slot, int state, int variant)
     {
-        PushCmd(4, slot, (float)state, 0f);
+        PushCmd(4, slot, (float)state, (float)variant);
     }
 
     /// <summary>

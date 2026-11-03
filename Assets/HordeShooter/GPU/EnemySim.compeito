@@ -42,6 +42,62 @@
 #define VARIANT_NORMAL 0
 #define VARIANT_RUNNER 1
 #define VARIANT_BOSS   2
+#define VARIANT_BRUTE  3
+#define VARIANT_STALKER 4
+#define VARIANT_SWARM  5
+#define VARIANT_BOMBER 6
+#define VARIANT_ELITE  7
+
+// Per-variant stat tables (M7d). Base: hp 30, speed _MoveSpeed, attack range
+// _AttackRange, hit radius _HitRadius, player damage 10 (CPU mirror in
+// HordeNet.Wave._variantDamage). Boss keeps its fixed 400 HP.
+float VariantHpMul(int v)
+{
+    if (v == VARIANT_BOSS) return 13.3333;   // 30 * 13.3333 = 400
+    if (v == VARIANT_RUNNER) return 0.67;
+    if (v == VARIANT_BRUTE) return 3.0;
+    if (v == VARIANT_STALKER) return 0.5;
+    if (v == VARIANT_SWARM) return 0.33;
+    if (v == VARIANT_BOMBER) return 1.33;
+    if (v == VARIANT_ELITE) return 2.0;
+    return 1.0;
+}
+
+float VariantSpeedMul(int v)
+{
+    if (v == VARIANT_BOSS) return 0.6;
+    if (v == VARIANT_RUNNER) return 1.6;
+    if (v == VARIANT_BRUTE) return 0.7;
+    if (v == VARIANT_STALKER) return 2.0;
+    if (v == VARIANT_SWARM) return 1.2;
+    if (v == VARIANT_BOMBER) return 0.9;
+    if (v == VARIANT_ELITE) return 1.1;
+    return 1.0;
+}
+
+float VariantAtkRangeMul(int v)
+{
+    if (v == VARIANT_BOSS) return 1.6;
+    if (v == VARIANT_RUNNER) return 0.85;
+    if (v == VARIANT_BRUTE) return 1.3;
+    if (v == VARIANT_STALKER) return 0.8;
+    if (v == VARIANT_SWARM) return 0.7;
+    if (v == VARIANT_BOMBER) return 1.4;
+    if (v == VARIANT_ELITE) return 1.1;
+    return 1.0;
+}
+
+float VariantScale(int v)
+{
+    if (v == VARIANT_BOSS) return 1.9;
+    if (v == VARIANT_RUNNER) return 0.9;
+    if (v == VARIANT_BRUTE) return 1.4;
+    if (v == VARIANT_STALKER) return 0.8;
+    if (v == VARIANT_SWARM) return 0.6;
+    if (v == VARIANT_BOMBER) return 1.1;
+    if (v == VARIANT_ELITE) return 1.2;
+    return 1.0;
+}
 
 Texture2D<float4> _PosIn;
 Texture2D<float4> _StateIn;
@@ -174,6 +230,7 @@ float4 SimPos(uint2 id)
     float4 st = LoadState(i);
     float4 mt = LoadMeta(i);
     int state = (int)round(st.y);
+    int variant = (int)round(mt.y);
 
     float3 pos = posIn.xyz;
     float yaw = posIn.w;
@@ -246,7 +303,7 @@ float4 SimPos(uint2 id)
         if (sepLen > _MaxSeparation) sep = sep / sepLen * _MaxSeparation;
 
         float3 vel = dir * speed + sep * _SeparationStrength;
-        if (hasTarget && dist < _AttackRange) vel = sep * _SeparationStrength;
+        if (hasTarget && dist < _AttackRange * VariantAtkRangeMul(variant)) vel = sep * _SeparationStrength;
 
         // Wall avoidance: probe along the ACTUAL step direction (separation can push
         // laterally into walls), then hard-clamp: never integrate into a wall voxel.
@@ -346,7 +403,7 @@ float4 SimState(uint2 id)
         else if (type == CMD_SPAWN)
         {
             int spawnVariant = (int)round(cmd.w);
-            hp = (spawnVariant == VARIANT_BOSS) ? 400.0 : 30.0;
+            hp = 30.0 * VariantHpMul(spawnVariant);
             state = STATE_SPAWNING;
             timer = 0.0;
             flash = 0.0;
@@ -355,11 +412,12 @@ float4 SimState(uint2 id)
         {
             // Late-joiner catch-up: activate an inactive slot at its corrected
             // position (SimPos leaves pos untouched; the correction snaps it).
+            // cmd.w now carries the variant so HP matches the type.
             if (state != STATE_INACTIVE) continue;
             int targetState = (int)round(cmd.z);
             if (targetState < STATE_SPAWNING || targetState > STATE_STAGGER) targetState = STATE_CHASE;
             state = targetState;
-            hp = 30.0;
+            hp = 30.0 * VariantHpMul((int)round(cmd.w));
             timer = 0.0;
             flash = 0.0;
         }
@@ -375,7 +433,7 @@ float4 SimState(uint2 id)
         if (tIdx >= 0)
         {
             float4 tp = _PlayerTex.Load(int3(tIdx, 0, 0));
-            if (tp.w > 0.5 && distance(posIn.xyz, tp.xyz) < _AttackRange)
+            if (tp.w > 0.5 && distance(posIn.xyz, tp.xyz) < _AttackRange * VariantAtkRangeMul(variant))
             {
                 state = STATE_ATTACK;
                 timer = 0.0;
@@ -404,7 +462,10 @@ float4 SimMeta(uint2 id)
     for (int c = 0; c < 8; c++)
     {
         float4 cmd = _CmdTex.Load(int3(c, 0, 0));
-        if ((int)round(cmd.x) == CMD_SPAWN && (int)round(cmd.y) == i)
+        int ctype = (int)round(cmd.x);
+        if (ctype == CMD_SPAWN && (int)round(cmd.y) == i)
+            variant = (int)round(cmd.w);
+        else if (ctype == CMD_WAKE && (int)round(cmd.y) == i)
             variant = (int)round(cmd.w);
     }
 
@@ -426,10 +487,9 @@ float4 SimMeta(uint2 id)
         }
     }
 
-    float varMul = (variant == VARIANT_BOSS) ? 0.6 : ((variant == VARIANT_RUNNER) ? 1.5 : 1.0);
     float speed = 0.0;
-    if (state == STATE_CHASE) speed = _MoveSpeed * varMul;
-    else if (state == STATE_ATTACK) speed = _MoveSpeed * varMul * 0.15;
+    if (state == STATE_CHASE) speed = _MoveSpeed * VariantSpeedMul(variant);
+    else if (state == STATE_ATTACK) speed = _MoveSpeed * VariantSpeedMul(variant) * 0.15;
 
     float phase = mt.w + _DeltaTime * speed * 2.2;
     return float4(speed, (float)variant, (float)target, phase);
@@ -447,13 +507,15 @@ float4 HitTest(uint2 id)
 
     float bestT = ro.w;
     int bestSlot = -1;
-    float rad = (rd.w > 0.001) ? rd.w : _HitRadius;
-    float r2 = rad * rad;
     for (int j = 0; j < _SlotCount; j++)
     {
         float4 ost = _StateIn.Load(int3(SlotTexel(j), 0));
         int ostate = (int)round(ost.y);
         if (ostate == STATE_INACTIVE || ostate == STATE_DYING) continue;
+        // hit radius: per-ray override (drill etc.) wins, else per-variant scale
+        float4 omt = _MetaIn.Load(int3(SlotTexel(j), 0));
+        float rad = (rd.w > 0.001) ? rd.w : _HitRadius * VariantScale((int)round(omt.y));
+        float r2 = rad * rad;
         // Hit sphere at chest height (the sim position is the feet).
         float3 oc = _PosIn.Load(int3(SlotTexel(j), 0)).xyz + float3(0, 0.9, 0) - ro.xyz;
         float t = dot(oc, rd.xyz);

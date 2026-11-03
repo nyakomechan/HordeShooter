@@ -4,8 +4,10 @@ using VRC.Udon.Common.Interfaces;
 
 /// <summary>
 /// HordeSim partial: async GPU readback of the sim state into CPU mirrors.
-/// Requests are chained (pos -> state -> hit results) so the shared readback
-/// callback can tell them apart without extra bookkeeping.
+/// Requests are chained (pos -> state -> meta -> hit results) so the shared
+/// readback callback can tell them apart without extra bookkeeping. The meta
+/// pass also rebuilds the per-variant slot lists used by the M7d variant-batched
+/// draws (unity_InstanceID -> slot mapping).
 /// </summary>
 public partial class HordeSim
 {
@@ -49,6 +51,27 @@ public partial class HordeSim
             {
                 Debug.Log("[HordeSim] state readback FAILED: hasError=" + request.hasError);
             }
+            _mirrorAwaitMeta = true;
+            _awaitStart = Time.time;
+            VRCAsyncGPUReadback.Request(_readA ? _metaA : _metaB, 0, (IUdonEventReceiver)this);
+            return;
+        }
+
+        if (_mirrorAwaitMeta)
+        {
+            _mirrorAwaitMeta = false;
+            if (!request.hasError && request.TryGetData(_metaMirrorBuf))
+            {
+                for (int i = 0; i < slotCount; i++)
+                {
+                    mirrorVariant[i] = _metaMirrorBuf[i].g;
+                }
+                _RebuildSlotLists();
+            }
+            else
+            {
+                Debug.Log("[HordeSim] meta readback FAILED: hasError=" + request.hasError);
+            }
             if (_hitAwait)
             {
                 _awaitStart = Time.time;
@@ -71,6 +94,37 @@ public partial class HordeSim
                 if (_hitListener != null)
                     _hitListener.SendCustomEvent(_hitListenerEvent);
             }
+        }
+    }
+
+    /// <summary>
+    /// Rebuilds the per-variant slot lists from the fresh mirror: variant v's
+    /// list holds the slot indices of its alive slots; _variantCounts[v] is the
+    /// instance count for that variant's DrawMeshInstanced call.
+    /// </summary>
+    private void _RebuildSlotLists()
+    {
+        for (int v = 0; v < 8; v++) _variantCounts[v] = 0;
+        for (int v = 0; v < 8; v++)
+        {
+            Color[] cols = _slotListColors[v];
+            for (int i = 0; i < slotCount; i++) cols[i] = new Color(0f, 0f, 0f, 0f);
+        }
+        for (int i = 0; i < slotCount; i++)
+        {
+            int s = (int)mirrorState[i];
+            if (s < 1 || s > 4) continue;
+            int v = (int)mirrorVariant[i];
+            if (v < 0 || v > 7) v = 0;
+            int n = _variantCounts[v];
+            if (n >= slotCount) continue;
+            _slotListColors[v][n] = new Color((float)i, 0f, 0f, 1f);
+            _variantCounts[v] = n + 1;
+        }
+        for (int v = 0; v < 8; v++)
+        {
+            _slotListTex[v].SetPixels(_slotListColors[v]);
+            _slotListTex[v].Apply(false);
         }
     }
 }

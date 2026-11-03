@@ -121,11 +121,11 @@ public partial class HordeNet
 
     private void _EnqueueCorrection(int slot, int qx, int qy, int qz)
     {
-        _EnqueueCorrection(slot, qx, qy, qz, 0);
+        _EnqueueCorrection(slot, qx, qy, qz, 0, 0);
     }
 
-    /// <summary>Queue entry: [slot, qx, qy, qz, wakeState, variant]. wakeState > 0 activates an inactive slot.</summary>
-    private void _EnqueueCorrection(int slot, int qx, int qy, int qz, int wakeState)
+    /// <summary>Queue entry: [slot, qx, qy, qz, wakeState, variant]. wakeState > 0 activates an inactive slot with the given variant.</summary>
+    private void _EnqueueCorrection(int slot, int qx, int qy, int qz, int wakeState, int variant)
     {
         if (_corrQueueCount + 6 > _corrQueue.Length) return;
         _corrQueue[_corrQueueCount] = slot;
@@ -133,7 +133,7 @@ public partial class HordeNet
         _corrQueue[_corrQueueCount + 2] = qy;
         _corrQueue[_corrQueueCount + 3] = qz;
         _corrQueue[_corrQueueCount + 4] = wakeState;
-        _corrQueue[_corrQueueCount + 5] = 0;
+        _corrQueue[_corrQueueCount + 5] = variant;
         _corrQueueCount += 6;
     }
 
@@ -150,7 +150,8 @@ public partial class HordeNet
             float y = (float)_corrQueue[2] / 64f - 512f;
             float z = (float)_corrQueue[3] / 64f - 512f;
             int wakeState = _corrQueue[4];
-            if (wakeState > 0) hordeSim.QueueWake(slot, wakeState);
+            int variant = _corrQueue[5];
+            if (wakeState > 0) hordeSim.QueueWake(slot, wakeState, variant);
             hordeSim.PushCorrection(slot, new Vector3(x, y, z));
             // shift remaining
             for (int i = 6; i < _corrQueueCount; i++) _corrQueue[i - 6] = _corrQueue[i];

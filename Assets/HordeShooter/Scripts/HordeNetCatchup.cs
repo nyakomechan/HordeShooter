@@ -28,6 +28,7 @@ public class HordeNetCatchup : UdonSharpBehaviour
         float[] ms = hordeSim.mirrorState;
         float[] mh = hordeSim.mirrorYaw;
         float[] mhp = hordeSim.mirrorHp;
+        float[] mv = hordeSim.mirrorVariant;
         if (mx == null) return;
         int slots = hordeSim.slotCount;
         if (slots > 512) slots = 512;
@@ -39,9 +40,11 @@ public class HordeNetCatchup : UdonSharpBehaviour
             int yaw8 = _Quant8((mh[i] / 6.28318f + 1f) * 0.5f * 255f);
             int hp8 = _Quant8(mhp[i] * 0.5f);
             int st8 = (int)ms[i] & 0xFF;
+            int var8 = (mv != null) ? ((int)mv[i] & 0xFF) : 0;
             joinSnapshot[i * 3] = (qx << 16) | (qz & 0xFFFF);
             joinSnapshot[i * 3 + 1] = qy & 0xFFFF;
-            joinSnapshot[i * 3 + 2] = (yaw8 << 24) | (hp8 << 16) | (st8 << 8);
+            // word2: yaw8 | hp8 | st8 | var8 (M7d: variant rides the free low byte)
+            joinSnapshot[i * 3 + 2] = (yaw8 << 24) | (hp8 << 16) | (st8 << 8) | var8;
         }
         joinRevision++;
         RequestSerialization();
