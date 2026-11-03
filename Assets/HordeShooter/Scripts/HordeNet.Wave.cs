@@ -104,8 +104,9 @@ public partial class HordeNet
     }
 
     // ---- per-variant player-damage tables (mirror of EnemySim.compeito) ----
-    // base player damage 10, base range playerAttackRange
-    private float[] _variantDamage = new float[] { 10f, 6f, 25f, 20f, 8f, 4f, 35f, 15f };
+    // damage = playerDamagePerTick * _variantDamageMul[v] (base 10 -> walker 10,
+    // boss 25, brute 20, ...); range = playerAttackRange * _variantRangeMul[v]
+    private float[] _variantDamageMul = new float[] { 1.0f, 0.6f, 2.5f, 2.0f, 0.8f, 0.4f, 3.5f, 1.5f };
     private float[] _variantRangeMul = new float[] { 1.0f, 0.85f, 1.6f, 1.3f, 0.8f, 0.7f, 1.4f, 1.1f };
 
     /// <summary>
@@ -333,7 +334,7 @@ public partial class HordeNet
                 if (dx * dx + dz * dz < r2)
                 {
                     _playerHitTick[p] = true;
-                    _playerDamage[p] = (int)_variantDamage[v];
+                    _playerDamage[p] = (int)(playerDamagePerTick * _variantDamageMul[v]);
                     break;
                 }
             }
