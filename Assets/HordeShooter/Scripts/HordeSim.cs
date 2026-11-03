@@ -134,6 +134,7 @@ public partial class HordeSim : UdonSharpBehaviour
     [System.NonSerialized] public int hitBatchId;
 
     private int _nextDebugSlot;
+    private bool _despawnAllPending;
     private float _profAccum;
     private int _profFrames;
     private System.Diagnostics.Stopwatch _profWatch = new System.Diagnostics.Stopwatch();
@@ -326,6 +327,10 @@ public partial class HordeSim : UdonSharpBehaviour
         UpdatePlayerTex();
         FlushCmds();
         simMaterial.SetFloat("_DeltaTime", dt);
+        // one-frame global despawn flag (wave end): SimState returns every slot
+        // to INACTIVE instantly — no death anim, no per-slot commands needed.
+        simMaterial.SetFloat("_DespawnAll", _despawnAllPending ? 1f : 0f);
+        _despawnAllPending = false;
         simMaterial.SetTexture("_PosIn", posCur);
         simMaterial.SetTexture("_StateIn", stateCur);
         simMaterial.SetTexture("_MetaIn", metaCur);
@@ -532,6 +537,15 @@ public partial class HordeSim : UdonSharpBehaviour
     public void QueueWake(int slot, int state)
     {
         PushCmd(4, slot, (float)state, 0f);
+    }
+
+    /// <summary>
+    /// Wave-end despawn: every slot returns to INACTIVE on the next sim step
+    /// (one _DespawnAll flag frame in EnemySim — no death anim, no kill events).
+    /// </summary>
+    public void DespawnAll()
+    {
+        _despawnAllPending = true;
     }
 
     // ---- hitscan ray queue ----

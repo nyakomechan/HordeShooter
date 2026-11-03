@@ -3,32 +3,49 @@ using VRC.SDK3.UdonNetworkCalling;
 using VRC.SDKBase;
 
 /// <summary>
-/// HordeNet partial: wave director (owner-authoritative).
-/// gamePhase: 0 = lobby, 1 = wave active, 2 = intermission.
-/// Spawns are paced ≤16 per chunk (event-ring safe: 32-slot ring, 16-step walk).
-/// Every 5th wave ends with a boss (variant 2, owner CPU HP via bossHp[]).
-/// Player damage: ATTACK-state enemies within range chip playerHp[] (synced);
-/// a downed player is teleported back by their own client and revives via _ReviveMe.
+/// HordeNet partial: roguelite wave director (owner-authoritative).
+/// gamePhase: 0 = lobby, 1 = wave active, 2 = shop, 3 = game over.
+///
+/// Waves are quota-based (M7):
+///   quotaType 0 = kill N trash, 1 = survive T seconds, 2 = kill the boss
+///   (every bossEveryWaves-th wave; the boss spawns at wave start).
+/// Trash enemies are MAINTAINED at a constant field count: every
+/// maintainCheckInterval the owner tops the alive count up to the wave's
+/// maintain target with paced authority spawns (≤ spawnBatchMax per batch,
+/// event-ring safe). At wave end every remaining enemy despawns instantly
+/// (HordeSim.DespawnAll — no death anim, no kill events) and the game enters
+/// the shop phase; the next wave starts when every player is ready or after
+/// shopSeconds.
 /// </summary>
 public partial class HordeNet
 {
-    [Header("Wave director")]
-    public int waveBaseCount = 24;
-    public int waveGrowth = 12;
-    public int waveMaxCount = 460;
-    public float intermissionSeconds = 8f;
-    public float spawnChunkInterval = 0.4f;
+    [Header("Roguelite wave config")]
+    public int maintainBase = 40;          // trash kept alive on the field, wave 1
+    public int maintainPerWave = 8;
+    public int maintainMax = 220;
+    public int bossMaintainBase = 16;      // reduced trash pressure on boss waves
+    public int bossMaintainPerWave = 4;
+    public float maintainCheckInterval = 0.5f;
+    public int spawnBatchMax = 16;         // ring-safe batch cap (32-slot ring, 16-step walk)
+    public int bossEveryWaves = 3;         // every 3rd wave: boss kill quota
+    public int killQuotaBase = 30;
+    public int killQuotaPerWave = 10;
+    public int surviveBase = 45;           // seconds
+    public int survivePerWave = 10;
+    public float shopSeconds = 60f;        // shop phase timeout -> next wave
     public float playerDamageInterval = 0.5f;
     public int playerDamagePerTick = 10;
     public float playerAttackRange = 1.4f;
     public float gameOverResetSeconds = 10f;   // game over -> auto reset & respawn after this
 
-    private int _waveSpawnRemaining;
+    // ---- runtime (owner) ----
+    private float _maintainTimer;
+    private float _waveEndCheckTimer;
     private int _waveNextSlot;
     private int _waveSpawnIdx;
-    private bool _waveSpawning;
-    private float _waveCheckTimer;
-    private float _intermissionUntil;
+    private float _waveStartTime;
+    private bool _waveBossSpawned;
+    private float _shopUntil;
     private float _damageTimer;
     private float _gameOverAt = -1f;
     private bool[] _playerHitTick = new bool[16];
@@ -47,37 +64,63 @@ public partial class HordeNet
     private void _BeginNextWave()
     {
         waveNumber++;
-        int count = waveBaseCount + (waveNumber - 1) * waveGrowth;
-        if (count > waveMaxCount) count = waveMaxCount;
-        _waveSpawnRemaining = count;
-        _waveSpawning = true;
+        _ComputeQuota();
+        quotaProgress = 0;
+        _waveStartTime = Time.time;
+        _waveBossSpawned = false;
+        _maintainTimer = 0f;
+        _waveEndCheckTimer = 0f;
+        if (quotaType == 2)
+        {
+            // boss wave: the boss spawns immediately at wave start
+            _waveBossSpawned = true;
+            int slot = _waveNextSlot;
+            _waveNextSlot = (_waveNextSlot + 1) % 512;
+            AuthoritySpawn(slot, _waveSpawnIdx, 2);
+            _waveSpawnIdx = (_waveSpawnIdx + 1) & 7;
+            _RegisterBoss(slot);
+        }
         RequestSerialization();
-        _WaveSpawnChunk();
     }
 
-    /// <summary>Paced spawn: ≤16 per call (ring-safe), chained via delayed event.</summary>
-    public void _WaveSpawnChunk()
+    /// <summary>Quota table: wave%3 cycles kill / survive / boss.</summary>
+    private void _ComputeQuota()
     {
-        if (!_waveSpawning || !_IsAuthority()) return;
-        int n = _waveSpawnRemaining;
-        if (n > 16) n = 16;
+        int m = waveNumber % 3;
+        if (m == 0) { quotaType = 2; quotaTarget = 1; }
+        else if (m == 1) { quotaType = 0; quotaTarget = killQuotaBase + (waveNumber - 1) * killQuotaPerWave; }
+        else { quotaType = 1; quotaTarget = surviveBase + (waveNumber - 1) * survivePerWave; }
+    }
+
+    /// <summary>Trash count the field should hold during this wave.</summary>
+    private int _MaintainTarget()
+    {
+        int t = (quotaType == 2)
+            ? bossMaintainBase + (waveNumber - 1) * bossMaintainPerWave
+            : maintainBase + (waveNumber - 1) * maintainPerWave;
+        if (t > maintainMax) t = maintainMax;
+        return t;
+    }
+
+    /// <summary>Variant picker hook — M7d replaces this with per-wave weight tables.</summary>
+    private int _PickVariant()
+    {
+        if (waveNumber >= 2 && (_waveNextSlot % 5) == 4) return 1;   // runners from wave 2
+        return 0;
+    }
+
+    /// <summary>Top the field up to the maintain target (paced, ring-safe).</summary>
+    private void _MaintainSpawn()
+    {
+        int deficit = _MaintainTarget() - _CountAlive();
+        if (deficit <= 0) return;
+        int n = deficit > spawnBatchMax ? spawnBatchMax : deficit;
         for (int i = 0; i < n; i++)
         {
-            int variant = 0;
-            if (waveNumber >= 2 && (_waveNextSlot % 5) == 4) variant = 1;      // runners from wave 2
-            // boss: the very last enemy of every 5th wave (remaining counts down
-            // across the loop, so compare against the per-iteration remainder)
-            if (waveNumber % 5 == 0 && _waveSpawnRemaining - i == 1) variant = 2;
-            AuthoritySpawn(_waveNextSlot, _waveSpawnIdx, variant);
-            if (variant == 2) _RegisterBoss(_waveNextSlot);
+            AuthoritySpawn(_waveNextSlot, _waveSpawnIdx, _PickVariant());
             _waveNextSlot = (_waveNextSlot + 1) % 512;
             _waveSpawnIdx = (_waveSpawnIdx + 1) & 7;
         }
-        _waveSpawnRemaining -= n;
-        if (_waveSpawnRemaining > 0)
-            SendCustomEventDelayedSeconds(nameof(_WaveSpawnChunk), spawnChunkInterval);
-        else
-            _waveSpawning = false;
     }
 
     private void _RegisterBoss(int slot)
@@ -93,28 +136,32 @@ public partial class HordeNet
         }
     }
 
-    /// <summary>Owner periodic: wave end detection + player damage. Called from Update.</summary>
+    /// <summary>Owner periodic: maintain spawn, quota progress, wave end, shop, player damage.</summary>
     private void _WaveTick()
     {
         if (gamePhase == 1)
         {
-            if (!_waveSpawning)
+            _maintainTimer += Time.deltaTime;
+            if (_maintainTimer >= maintainCheckInterval)
             {
-                _waveCheckTimer += Time.deltaTime;
-                if (_waveCheckTimer >= 1f)
-                {
-                    _waveCheckTimer = 0f;
-                    _CleanupBossSlots();
-                    if (_CountAlive() == 0)
-                    {
-                        gamePhase = 2;
-                        _intermissionUntil = Time.time + intermissionSeconds;
-                        // wave cleared: revive every downed player
-                        for (int i = 0; i < 16; i++) playerHp[i] = 100;
-                        RequestSerialization();
-                    }
-                }
+                _maintainTimer = 0f;
+                _MaintainSpawn();
             }
+
+            // survive quota: elapsed seconds ride the 3Hz snapshot serialization
+            if (quotaType == 1)
+            {
+                int elapsed = (int)(Time.time - _waveStartTime);
+                if (elapsed > quotaProgress) quotaProgress = elapsed;
+            }
+
+            _waveEndCheckTimer += Time.deltaTime;
+            if (_waveEndCheckTimer >= 1f)
+            {
+                _waveEndCheckTimer = 0f;
+                if (_QuotaDone()) { _EndWave(); return; }
+            }
+
             _damageTimer += Time.deltaTime;
             if (_damageTimer >= playerDamageInterval)
             {
@@ -124,7 +171,8 @@ public partial class HordeNet
         }
         else if (gamePhase == 2)
         {
-            if (Time.time >= _intermissionUntil)
+            // shop: next wave when everyone is ready or the timeout expires
+            if (Time.time >= _shopUntil || _AllPlayersReady())
             {
                 gamePhase = 1;
                 _BeginNextWave();
@@ -139,6 +187,67 @@ public partial class HordeNet
                 _RestartGame();
             }
         }
+    }
+
+    private bool _QuotaDone()
+    {
+        if (quotaType == 0) return quotaProgress >= quotaTarget;
+        if (quotaType == 1) return Time.time - _waveStartTime >= quotaTarget;
+        _CleanupBossSlots();
+        return _waveBossSpawned && _CountBossSlots() == 0;
+    }
+
+    private int _CountBossSlots()
+    {
+        int c = 0;
+        for (int i = 0; i < 8; i++)
+        {
+            if (bossSlots[i] >= 0) c++;
+        }
+        return c;
+    }
+
+    /// <summary>
+    /// Wave end: despawn every remaining enemy instantly (no death anim, no kill
+    /// events — the quota is already met), revive everyone, enter the shop phase.
+    /// Remotes see waveEndRevision and run the same local despawn.
+    /// </summary>
+    private void _EndWave()
+    {
+        if (hordeSim != null) hordeSim.DespawnAll();
+        waveEndRevision++;
+        gamePhase = 2;
+        _shopUntil = Time.time + shopSeconds;
+        shopReadyBits = 0;
+        for (int i = 0; i < 16; i++) playerHp[i] = 100;
+        RequestSerialization();
+    }
+
+    /// <summary>ShopController ready report (owner only; network or direct local call).</summary>
+    [NetworkCallable(22)]
+    public void _ReportShopReady()
+    {
+        if (!NetworkCalling.InNetworkCall && !_IsAuthority()) return;
+        if (!_IsAuthority()) return;
+        VRCPlayerApi caller = NetworkCalling.CallingPlayer;
+        int id = (caller != null && caller.IsValid()) ? caller.playerId : Networking.LocalPlayer.playerId;
+        int idx = id - 1;
+        if (idx < 0 || idx >= 16) return;
+        shopReadyBits |= (1 << idx);
+        RequestSerialization();
+    }
+
+    private bool _AllPlayersReady()
+    {
+        _RefreshPlayers();
+        if (_playerCount == 0) return false;
+        for (int p = 0; p < _playerCount; p++)
+        {
+            int idx = _playerIds[p] - 1;
+            if (idx < 0 || idx >= 16) continue;
+            if ((shopReadyBits & (1 << idx)) == 0) return false;
+        }
+        return true;
     }
 
     private int _CountAlive()
@@ -230,9 +339,11 @@ public partial class HordeNet
         clearRevision++;
         gamePhase = 0;
         waveNumber = 0;
+        quotaType = 0;
+        quotaTarget = 0;
+        quotaProgress = 0;
+        shopReadyBits = 0;
         for (int i = 0; i < 16; i++) playerHp[i] = 100;
-        _waveSpawning = false;
-        _waveSpawnRemaining = 0;
         if (hordeSim != null) hordeSim._DebugReset();
         RequestSerialization();
     }

@@ -102,6 +102,11 @@ public static class HordeHudSetup
 
         Text waveText = FindText(canvasGo.transform, "WaveText");
         Text aliveText = FindText(canvasGo.transform, "AliveText");
+        // QuotaText (M7): created on demand so in-place updates stay non-destructive
+        Text quotaText = FindText(canvasGo.transform, "QuotaText");
+        if (quotaText == null)
+            quotaText = MakeText(canvasGo.transform, "QuotaText", font,
+                new Vector2(0.5f, 1f), new Vector2(0f, -64f), new Vector2(500, 36), 26, TextAnchor.UpperCenter, new Color(1f, 0.85f, 0.4f));
         Image playerHpFill = FindFill(canvasGo.transform, "PlayerHPBg", "PlayerHPFill");
         GameObject bossHpRoot = canvasGo.transform.Find("BossHPRoot")?.gameObject;
         Image bossHpFill = bossHpRoot != null ? FindFill(bossHpRoot.transform, "BossHPFill", "BossHPFill") : null;
@@ -165,6 +170,7 @@ public static class HordeHudSetup
         hud.hordeNet = net;
         hud.hordeSim = sim;
         hud.waveText = waveText;
+        hud.quotaText = quotaText;
         hud.aliveText = aliveText;
         hud.bossHpRoot = bossHpRoot;
         hud.bossHpFill = bossHpFill;

@@ -39,6 +39,12 @@ public partial class HordeNet : UdonSharpBehaviour
     [UdonSynced] public int[] bossSlots = new int[8];
     [UdonSynced] public int[] playerHp = new int[16];
     [UdonSynced] public int clearRevision;   // bumped on game restart: remotes clear their local sim
+    // ---- roguelite (M7) ----
+    [UdonSynced] public int quotaType;        // 0 = kill N, 1 = survive T seconds, 2 = boss kill
+    [UdonSynced] public int quotaTarget;      // kill count / seconds / 1 (boss)
+    [UdonSynced] public int quotaProgress;    // kills so far / elapsed seconds
+    [UdonSynced] public int waveEndRevision;  // bumped at wave end: remotes despawn all remaining enemies
+    [UdonSynced] public int shopReadyBits;    // bit (playerId-1) set while that player is ready in the shop
 
     // ---- event ring ----
     public const int EV_NONE = 0;
@@ -136,6 +142,8 @@ public partial class HordeNet : UdonSharpBehaviour
         }
         hordeSim.QueueKill(slot);
         _RingPush(EV_KILL, slot, p0, p1);
+        // roguelite kill quota: the owner counts every arbitrated kill during a wave
+        if (gamePhase == 1 && quotaType == 0) quotaProgress++;
         RequestSerialization();
     }
 

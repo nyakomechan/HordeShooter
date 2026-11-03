@@ -79,6 +79,7 @@ float _SeparationStrength;
 float _MaxSeparation;
 float _GroundY;
 float _SpawnJitter;
+float _DespawnAll;   // one-frame flag: every slot returns to INACTIVE instantly (wave end)
 
 int   _GSX;
 int   _GSY;
@@ -305,6 +306,13 @@ float4 SimState(uint2 id)
     float timer = st.z;
     float flash = st.w;
     int variant = (int)round(mt.y);
+
+    // Wave-end despawn: instant deactivation, no DYING anim, no kill events.
+    if (_DespawnAll > 0.5)
+    {
+        if (state != STATE_INACTIVE) { state = STATE_INACTIVE; timer = 0.0; hp = 0.0; flash = 0.0; }
+        return float4(hp, (float)state, timer, flash);
+    }
 
     for (int c = 0; c < 8; c++)
     {

@@ -15,6 +15,8 @@ public partial class HordeNet
     private bool _hasLoggedSnap;
     private int _appliedClearRevision;
     private bool _hasAppliedClear;
+    private int _appliedWaveEnd;
+    private bool _hasAppliedWaveEnd;
 
     public override void OnDeserialization()
     {
@@ -98,6 +100,19 @@ public partial class HordeNet
         {
             _appliedClearRevision = clearRevision;
             if (hordeSim != null) hordeSim._DebugReset();
+        }
+
+        // Wave end: the owner bumped waveEndRevision — despawn all remaining
+        // enemies locally (same instant despawn the owner ran).
+        if (!_hasAppliedWaveEnd)
+        {
+            _appliedWaveEnd = waveEndRevision;
+            _hasAppliedWaveEnd = true;
+        }
+        else if (waveEndRevision != _appliedWaveEnd)
+        {
+            _appliedWaveEnd = waveEndRevision;
+            if (hordeSim != null) hordeSim.DespawnAll();
         }
 
         // Late joiner catch-up moved to HordeNetCatchup (serialized on join only);

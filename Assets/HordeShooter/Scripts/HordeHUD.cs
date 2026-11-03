@@ -15,6 +15,7 @@ public class HordeHUD : UdonSharpBehaviour
     public HordeNet hordeNet;
     public HordeSim hordeSim;
     public Text waveText;
+    public Text quotaText;   // roguelite quota display (M7)
     public Text aliveText;
     public GameObject bossHpRoot;
     public Image bossHpFill;
@@ -63,9 +64,23 @@ public class HordeHUD : UdonSharpBehaviour
         if (waveText != null)
         {
             if (phase == 1) waveText.text = "WAVE " + wave;
-            else if (phase == 2) waveText.text = "NEXT WAVE...";
+            else if (phase == 2) waveText.text = "SHOP";
             else if (phase == 3) waveText.text = "GAME OVER - RESTARTING...";
             else waveText.text = "PRESS THE START CUBE";
+        }
+        if (quotaText != null)
+        {
+            if (phase == 1)
+            {
+                int qt = hordeNet.quotaType;
+                int target = hordeNet.quotaTarget;
+                int prog = hordeNet.quotaProgress;
+                if (qt == 0) quotaText.text = "ノルマ: のこり " + Mathf.Max(0, target - prog) + "体";
+                else if (qt == 1) quotaText.text = "ノルマ: あと " + Mathf.Max(0, target - prog) + "秒";
+                else quotaText.text = "ノルマ: BOSSを倒せ";
+            }
+            else if (phase == 2) quotaText.text = "SHOP - 準備ができたら待機";
+            else quotaText.text = "";
         }
         if (aliveText != null) aliveText.text = "" + _lastAliveCount;
 
